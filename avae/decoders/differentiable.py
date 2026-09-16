@@ -1,4 +1,4 @@
-from typing import Optional, Tuple
+import typing
 
 import torch
 
@@ -16,7 +16,7 @@ class GaussianSplatRenderer(torch.nn.Module):
 
     def __init__(
         self,
-        shape: Tuple[int],
+        shape: typing.Tuple[int],
         *,
         device: torch.device = torch.device("cpu"),
     ):
@@ -55,7 +55,7 @@ class GaussianSplatRenderer(torch.nn.Module):
         weights: torch.Tensor,
         sigmas: torch.Tensor,
         *,
-        splat_sigma_range: Tuple[float, float] = (0.0, 1.0),
+        splat_sigma_range: typing.Tuple[float, float] = (0.0, 1.0),
     ) -> torch.Tensor:
         """Render the Gaussian splats in an image volume.
 
@@ -167,12 +167,12 @@ class GaussianSplatDecoder(AbstractDecoder):
 
     def __init__(
         self,
-        shape: Tuple[int],
+        shape: typing.Tuple[int],
         *,
         n_splats: int = 128,
         latent_dims: int = 8,
         output_channels: int = 0,
-        splat_sigma_range: Tuple[float, float] = (0.02, 0.1),
+        splat_sigma_range: typing.Tuple[float, float] = (0.02, 0.1),
         default_axis: CartesianAxes = CartesianAxes.Z,
         device: torch.device = torch.device("cpu"),
         pose_dims: int,
@@ -235,9 +235,9 @@ class GaussianSplatDecoder(AbstractDecoder):
 
     def configure_renderer(
         self,
-        shape: Tuple[int],
+        shape: typing.Tuple[int],
         *,
-        splat_sigma_range: Tuple[float, float] = (0.02, 0.1),
+        splat_sigma_range: typing.Tuple[float, float] = (0.02, 0.1),
         default_axis: CartesianAxes = CartesianAxes.Z,
         device: torch.device = torch.device("cpu"),
     ) -> None:
@@ -259,7 +259,7 @@ class GaussianSplatDecoder(AbstractDecoder):
 
     def decode_splats(
         self, z: torch.Tensor, pose: torch.Tensor
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> typing.Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
 
         # predict the centroids for the splats
         splats = self.centroids(z).view(z.shape[0], 3, -1)

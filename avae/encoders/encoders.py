@@ -1,5 +1,5 @@
 import logging
-from typing import Optional
+import typing
 
 import numpy as np
 import torch
@@ -189,7 +189,7 @@ class EncoderA(AbstractEncoder):
     def __init__(
         self,
         input_shape: tuple,
-        capacity: Optional[int] = None,
+        capacity: typing.Optional[int] = None,
         depth: int = 4,
         latent_dims: int = 8,
         pose_dims: int = 0,

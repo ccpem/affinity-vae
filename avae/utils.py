@@ -7,14 +7,10 @@ import matplotlib.pyplot as plt
 import mrcfile
 import numpy as np
 import numpy.typing as npt
+import sklearn.linear_model
+import sklearn.metrics
+import sklearn.metrics.pairwise
 import torch
-from sklearn import metrics, preprocessing
-from sklearn.linear_model import LogisticRegression
-from sklearn.metrics.pairwise import cosine_similarity
-from sklearn.model_selection import GridSearchCV
-from sklearn.neighbors import KNeighborsClassifier
-from sklearn.neural_network import MLPClassifier
-from sklearn.pipeline import make_pipeline
 
 
 def as_list(value: object) -> list:
@@ -27,119 +23,6 @@ def as_list(value: object) -> list:
     if isinstance(value, tuple):
         return list(value)
     return [value]
-
-
-def accuracy(
-    x_train: npt.NDArray,
-    y_train: npt.NDArray,
-    x_val: npt.NDArray,
-    y_val: npt.NDArray,
-    classifier: str = "NN",
-) -> tuple[float, float, float, npt.NDArray, npt.NDArray]:
-    """Computes the accuracy using a given classifier. Currently only supports
-    neural network, K-nearest neighbors and logistic regression. A grid search on the
-    hyperparameters is performed.
-
-    Parameters
-    ----------
-    x_train: np.array
-        Training data.
-    y_train: np.array
-        Training labels.
-    x_val: np.array
-        Validation data.
-    y_val: np.array
-        Validation labels.
-    classifier: str
-        Classifier to use. Either 'NN' for neural network, 'KNN' for K-nearest neighbors or LR for logistic regression.
-
-
-    Returns
-    -------
-    train_acc: float
-        Training accuracy.
-    val_acc: float
-        Validation accuracy.
-    val_acc_selected: float
-        Validation accuracy calculated only for labels existing in the training set (this is useful in evaluation).
-    y_pred_train: np.array
-        Predicted training labels.
-    y_pred_val: np.array
-        Predicted validation labels.
-
-    """
-    logging.info(
-        "############################################### Computing accuracy..."
-    )
-    labs = np.unique(np.concatenate((y_train, y_val)))
-    le = preprocessing.LabelEncoder()
-    le.fit(labs)
-
-    classes_list_training = np.unique(y_train)
-    if np.setdiff1d(classes_list_training, np.unique(y_val)).size > 0:
-        logging.info(
-            f"Class {np.setdiff1d(classes_list_training, np.unique(y_val))}  was unseen in training data. Computing accuracy for sets of seen and unseen data"
-        )
-
-    index = np.argwhere(np.isin(y_val, classes_list_training)).ravel()
-
-    y_train = le.transform(y_train)
-    y_val = le.transform(y_val)
-
-    parameters: dict[str, typing.Any]
-
-    if classifier == "NN":
-
-        parameters = {
-            "hidden_layer_sizes": [
-                (250, 150, 30),
-                (100, 50, 15),
-                (50, 20, 10),
-                (20, 10, 5),
-                (200,),
-                (50,),
-            ],
-        }
-        method = MLPClassifier(
-            max_iter=500,
-            activation="relu",
-            solver="adam",
-            random_state=1,
-            alpha=1,
-        )
-
-    elif classifier == "KNN":
-        parameters = dict(n_neighbors=(range(1, 500, 100)))
-        method = KNeighborsClassifier()
-    else:
-        raise ValueError("Invalid classifier type must be NN, KNN or LR")
-
-    clf_cv = GridSearchCV(
-        estimator=method,
-        param_grid=parameters,
-        scoring="f1_macro",
-        cv=2,
-        verbose=0,
-    )
-    clf = make_pipeline(preprocessing.StandardScaler(), clf_cv)
-    clf.fit(x_train, y_train)
-    logging.info(
-        f"Best parameters found for {classifier}: {clf_cv.best_params_}"
-    )
-
-    y_pred_train = clf.predict(x_train)
-    y_pred_val = clf.predict(x_val)
-
-    train_acc = metrics.accuracy_score(y_train, y_pred_train)
-    val_acc = metrics.accuracy_score(y_val, y_pred_val)
-    val_acc_selected = metrics.accuracy_score(
-        np.array(y_val)[index].tolist(), np.array(y_pred_val)[index].tolist()
-    )
-
-    y_pred_train = le.inverse_transform(y_pred_train)
-    y_pred_val = le.inverse_transform(y_pred_val)
-
-    return train_acc, val_acc, val_acc_selected, y_pred_train, y_pred_val
 
 
 def create_grid_for_plotting(
@@ -219,10 +102,6 @@ def save_imshow_png(
         plt.imshow(array, cmap=cmap, vmin=min, vmax=max)  # channels last
 
         plt.savefig("plots/" + fname)
-
-        if not os.path.exists("plots/reconstructions"):
-            os.mkdir("plots/reconstructions")
-        plt.savefig("plots/reconstructions/epoch_" + str(epoch) + "_" + fname)
 
         if writer:
             writer.add_figure(figname, fig, epoch)
@@ -344,13 +223,13 @@ def latent_space_similarity_mat(
         Mode of the calculation (train, test, val)
     epoch: int
         Epoch number for title
-    classes_order: list
-        Order of the classes in the matrix
     display: bool
         When this variable is set to true, the function only dispalys the plot and doesnt save it.
     """
     # get same label order as affinity matrix
-    cosine_sim_matrix = cosine_similarity(latent_space)
+    cosine_sim_matrix = sklearn.metrics.pairwise.cosine_similarity(
+        latent_space
+    )
 
     cosine_sim_mat = np.zeros((num_classes, num_classes))
 
@@ -361,6 +240,10 @@ def latent_space_similarity_mat(
             cosine_sims = cosine_sim_matrix[class_i_indices][
                 :, class_j_indices
             ]
+            if cosine_sims.size == 0:
+                cosine_sim_mat[i, j] = 0.0
+                cosine_sim_mat[j, i] = 0.0
+                continue
             if plot_mode == "mean":
                 cosine_sim_mat[i, j] = np.mean(cosine_sims)
                 cosine_sim_mat[j, i] = cosine_sim_mat[

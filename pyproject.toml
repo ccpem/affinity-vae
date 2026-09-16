@@ -93,7 +93,6 @@ filterwarnings = [ # NEED TO FIX THESE WARNINGS ISSUE X
     "ignore:pkg_resources is deprecated as an API",
     "ignore:Deprecated call to `pkg_resources.declare_namespace('mpl_toolkits')`",
     "ignore:The get_cmap function was deprecated in Matplotlib 3.7 and will be removed two minor releases later.",
-    "ignore:Maximum iterations (500) reached and the optimization hasn't converged yet", # FIX THESE WARNINGS ISSUE x
     "ignore:Could not initialize NNPACK!.",
     "ignore:Mean of empty slice.",
     "ignore:invalid value encountered in divide",
@@ -105,6 +104,9 @@ filterwarnings = [ # NEED TO FIX THESE WARNINGS ISSUE X
 log_cli_level = "INFO"
 testpaths = [
   "tests",
+]
+markers = [
+    "integration: slow end-to-end training and evaluation tests",
 ]
 [tool.setuptools]
 include-package-data = true

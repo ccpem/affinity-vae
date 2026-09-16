@@ -160,7 +160,7 @@ Options:
                                   loadedif this file is provided, all other
                                   gamma related variables would be ignored
   -lr, --learning FLOAT           Learning rate.
-  -lf, --loss_fn TEXT             Loss type: 'MSE' or 'BCE' (default 'MSE').
+  --recon_loss TEXT               Loss type: 'MSE' or 'BCE' (default 'MSE').
   -bs, --beta_min FLOAT           Beta minimum in the case of cyclical
                                   annealing schedule
   -bc, --beta_cycle INTEGER       Number of cycles for beta during training in
@@ -179,11 +179,11 @@ Options:
                                   flat, other options include , cycle_linear,
                                   cycle_sigmoid, cycle_cosine, ramp
   -g, --gpu                       Use GPU for training.
-  -ev, --eval                     Evaluate test data.
-  -dn, --dynamic                  Enable collecting meta and dynamic latent
+  --evaluate                      Evaluate test data.
+  --vis_dynamic                   Enable collecting meta and dynamic latent
                                   space plots.
   -m, --model TEXT                Choose model to run. The choice of models
-                                  are a, b, u and gsd
+                                  are cnn and gsd
   -vl, --vis_los                  Visualise loss (every epoch starting at
                                   epoch 2).
   -vac, --vis_acc                 Visualise confusion matrix and F1 scores
@@ -264,7 +264,7 @@ vanilla beta-VAE.
 You can run on example data with the following command:
 
 ```
-python affinity-vae/run.py -d data/subtomo_files --split 20 --epochs 10 -ba 128 -lr 0.001 -de 4 -ch 64 -ld 8 -pd 3 --beta 1 --gamma 2 --limit 1000 --freq_all 5 --vis_all --dynamic
+python affinity-vae/run.py --datapath data/subtomo_files --split 20 --epochs 10 --batch 128 --learning 0.001 --depth 4 --channels 64 --latent_dims 8 --pose_dims 3 --beta 1 --gamma 2 --limit 1000 --freq_all 5 --vis_all --vis_dynamic
 ```
 
 where the **subtomo_files** is a directory with a number of `.mcr` proteine
@@ -278,18 +278,18 @@ the `classes.csv`.
 #### Using a config submission file
 
 You can also run the code using a submission config file (you can find an
-example with default values on `configs/avae-test-config.yml`). For example, you
+example with default values on `tests/avae-test-config.yml`). For example, you
 can run the following command:
 
 ```
-python affinity-vae/run.py --config_file affinity-vae/configs/avae-test-config.yml
+python affinity-vae/run.py --config_file affinity-vae/tests/avae-test-config.yml
 ```
 
 You can also use a mix of config file and command line arguments. For example,
 you can run the following command:
 
 ```
-python affinity-vae/run.py --config_file affinity-vae/configs/avae-test-config.yml --epochs 10 --affinity /path/to/different_affinity.csv
+python affinity-vae/run.py --config_file affinity-vae/tests/avae-test-config.yml --epochs 10 --affinity /path/to/different_affinity.csv
 ```
 
 this will rewrite the values for the epochs and affinity path in the config

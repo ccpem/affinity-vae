@@ -56,10 +56,10 @@ def run_napari(model_fn, meta_fn, ldim=None, pdim=None, manifold="umap"):
             )
 
     if ldim is not None:
-        lat_dims = ldim
+        latent_dims = ldim
     else:
         try:
-            lat_dims = model.encoder.mu.out_features
+            latent_dims = model.encoder.mu.out_features
         except AttributeError:
             raise AttributeError(
                 "Model does not have latent attributes, please specify manually."
@@ -71,7 +71,7 @@ def run_napari(model_fn, meta_fn, ldim=None, pdim=None, manifold="umap"):
         device=device,
         meta_df=meta_df,
         pose_dims=pose_dims,
-        latent_dims=lat_dims,
+        latent_dims=latent_dims,
         manifold=manifold,
     )
     viewer.window.add_dock_widget(widget, name="AffinityVAE")

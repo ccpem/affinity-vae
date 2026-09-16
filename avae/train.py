@@ -5,17 +5,15 @@ import lightning as lt
 import numpy as np
 import pandas as pd
 import torch
-from torch.utils.tensorboard import SummaryWriter
+import torch.utils.tensorboard
 
-from . import settings, vis
+from . import utils_learning, vis
 from .cyc_annealing import setup_annealing
 from .data import load_data
 from .loss import AVAELoss
 from .models import model_setup
-from .utils import accuracy, as_list, latest_file
-from .utils_gpu import (
-    setup_gpus,
-)
+from .utils import as_list, latest_file
+from .utils_gpu import setup_gpus
 from .utils_learning import (
     build_meta_df,
     combine_meta_df,
@@ -24,54 +22,7 @@ from .utils_learning import (
 )
 
 
-def train(
-    datapath: str,
-    datatype: str,
-    restart: bool,
-    state: str | None,
-    lim: int | None,
-    splt: int,
-    batch_s: int,
-    no_val_drop: bool,
-    affinity: str | None,
-    classes: str | None,
-    epochs: int,
-    channels: int,
-    depth: int,
-    filters: list | None,
-    lat_dims: int,
-    pose_dims: int,
-    bnorm_encoder: bool,
-    bnorm_decoder: bool,
-    gsd_conv_layers: int,
-    n_splats: int,
-    klred: str,
-    learning: float,
-    beta_load: str | None,
-    beta_min: float,
-    beta_max: float,
-    beta_cycle: int,
-    beta_ratio: float,
-    cyc_method_beta: str,
-    gamma_load: str | None,
-    gamma_min: float,
-    gamma_max: float,
-    gamma_cycle: int,
-    gamma_ratio: float,
-    cyc_method_gamma: str,
-    recon_fn: str,
-    use_gpu: bool,
-    gpu_devices: str | None,
-    model: str,
-    opt_method: str,
-    gaussian_blur: bool,
-    normalise: bool,
-    shift_min: bool,
-    rescale: int | None,
-    tensorboard: bool,
-    classifier: str,
-    strategy: str,
-):
+def train(params):
     """Function to train an AffinityVAE model. The inputs are training configuration parameters. In this function the
     data is loaded, selected and split into training, validation and test sets, the model is initialised and trained
     over epochs, the results are evaluated visualised and saved and the epoch level with a frequency configured with
@@ -79,184 +30,111 @@ def train(
 
     Parameters
     ----------
-    datapath: str
-        Path to the data directory.
-    datatype: str
-        data file formats : mrc, npy
-    restart: bool
-        If True, the model will be restarted from the latest saved state.
-    state: str
-        Path to the model state file to be used for evaluation/restart.
-    lim: int
-        Limit the number of samples to load.
-    splt: int
-        Percentage of data to be used for validation.
-    batch_s: int
-        Batch size.
-    no_val_drop: bool
-        If True, the last batch of validation data will not be dropped if it is smaller than batch size.
-    affinity: str
-        Path to the affinity matrix.
-    classes: list
-        List of classes to be selected from the data for the training and validation set.
-    epochs: int
-        Number of epochs to train the model.
-    channels: int
-        Number of channels in the input data.
-    depth: int
-        Depth of the model.
-    filters: list
-        List of filters to use in the model.
-    lat_dims: int
-        Number of latent dimensions.
-    pose_dims: int
-        Number of pose dimensions.
-    learning: float
-        Learning rate.
-    beta_min: float
-        Minimum value of beta.
-    beta_max: float
-        Maximum value of beta.
-    beta_cycle: int
-        Number of epochs for beta to cycle.
-    beta_ratio: float
-        Ratio of beta to gamma.
-    cyc_method_beta: str
-        Method of beta cycle.
-    gamma_min: float
-        Minimum value of gamma.
-    gamma_max: float
-        Maximum value of gamma.
-    gamma_cycle: int
-        Number of epochs for gamma to cycle.
-    gamma_ratio: float
-        Ratio of gamma to beta.
-    cyc_method_gamma: str
-        Method of gamma cycle.
-    recon_fn: str
-        Reconstruction loss function.
-    use_gpu: bool
-        If True, the model will be trained on GPU.
-    model: str
-        Type of model to train. Can be a or b.
-    opt_method: str
-        The method of optimisation. It can be adam/sgd/asgd (we can add other methods easily as we need them)
-    gaussian_blur: bool
-        if True, Gaussian bluring is applied to the input before being passed to the model.
-        This is added as a way to remove noise from the input data.
-    normalise:
-        In True, the input data is normalised before being passed to the model.
-    shift_min: bool
-        If True, the input data is shifted to have a minimum value of 0 and max of 1.
-    tensorboard: bool
-        If True, log metrics and figures using tensorboard.
-    classifier: str
-        The method to use on the latent space classification. Can be neural network (NN), k nearest neighbourgs (KNN) or logistic regression (LR).
-    bnorm_encoder: bool
-        If True, batch normalisation is applied to the encoder.
-    bnorm_decoder: bool
-        If True, batch normalisation is applied to the decoder.
-    strategy: str
-        The strategy to use for distributed training. Can be  'ddp', 'deepspeed' or 'fsdp".
-    gsd_conv_layers: int
-        activates convolution layers at the end of the differetiable decoder if set
-        and it is an integer defining the number of output channels.
-    n_splats: int
-        The number of splats in the Gaussian Splat Decoder.
-    klred: str
-        The method to reduce the KL divergence. Can be 'mean' or 'sum'.
-    beta_load: str
-        Path to the beta values to load.
-    gamma_load: str
-        Path to the gamma values to load.
-    rescale: int | None
-        If provided, the data is rescaled by the value.
+    params : object
+        A pydantic validated object containing all the training configuration parameters as attributes.
     """
+
     lt.pytorch.seed_everything(42)
 
     # ############################### LOGGING #################################
 
-    writer = SummaryWriter() if tensorboard else None
-    t_history = []
-    v_history = []
+    writer = (
+        torch.utils.tensorboard.SummaryWriter() if params.tensorboard else None
+    )
 
     # ############################### GPU SETUP ################################
 
     fabric = setup_gpus(
-        use_gpu=use_gpu,
-        gpu_devices=gpu_devices,
-        strategy=strategy,
+        gpu=params.gpu,
+        gpu_devices=params.gpu_devices,
+        strategy=params.strategy,
     )
 
     fabric.launch()
     device = fabric.device
     rank_zero = fabric.global_rank == 0
 
+    # DDP intentionally stashes autograd nodes across streams; silence the
+    # resulting benign AccumulateGrad stream-mismatch warning if available.
+    if hasattr(
+        torch.autograd.graph, "set_warn_on_accumulate_grad_stream_mismatch"
+    ):
+        torch.autograd.graph.set_warn_on_accumulate_grad_stream_mismatch(False)
+
     # ############################### ANNEALING ###############################
 
     beta_arr = setup_annealing(
-        epochs=epochs,
-        value_max=beta_max,
-        value_min=beta_min,
-        cyc_method=cyc_method_beta,
-        n_cycle=beta_cycle,
-        ratio=beta_ratio,
-        cycle_load=beta_load,
+        epochs=params.epochs,
+        value_max=params.beta,
+        value_min=params.beta_min,
+        cyc_method=params.cyc_method_beta,
+        n_cycle=params.beta_cycle,
+        ratio=params.beta_ratio,
+        cycle_load=params.beta_load,
     )
 
     gamma_arr = setup_annealing(
-        epochs=epochs,
-        value_max=gamma_max,
-        value_min=gamma_min,
-        cyc_method=cyc_method_gamma,
-        n_cycle=gamma_cycle,
-        ratio=gamma_ratio,
-        cycle_load=gamma_load,
+        epochs=params.epochs,
+        value_max=params.gamma,
+        value_min=params.gamma_min,
+        cyc_method=params.cyc_method_gamma,
+        n_cycle=params.gamma_cycle,
+        ratio=params.gamma_ratio,
+        cycle_load=params.gamma_load,
     )
-    if settings.VIS_CYC:
-        vis.plot_cyc_variable(beta_arr, "beta")
-        vis.plot_cyc_variable(gamma_arr, "gamma")
+    if rank_zero and params.vis_cyc:
+        vis.plot_cyc_variable(beta_arr, "beta", vis_format=params.vis_format)
+        vis.plot_cyc_variable(gamma_arr, "gamma", vis_format=params.vis_format)
 
     # ############################### DATA ###############################
     trains, vals, tests, affinity_matrix, data_dim = load_data(
-        datapath=datapath,
-        datatype=datatype,
-        lim=lim,
-        splt=splt,
-        batch_s=batch_s,
-        no_val_drop=no_val_drop,
         eval=False,
-        affinity_path=affinity,
-        classes=classes,
-        gaussian_blur=gaussian_blur,
-        normalise=normalise,
-        shift_min=shift_min,
-        rescale=rescale,
+        datapath=params.datapath,
+        datatype=params.datatype,
+        lim=params.limit,
+        splt=params.split,
+        batch=params.batch,
+        no_val_drop=params.no_val_drop,
+        affinity_path=params.affinity,
+        classes=params.classes,
+        gaussian_blur=params.gaussian_blur,
+        normalise=params.normalise,
+        shift_min=params.shift_min,
+        rescale=params.rescale,
+        vis_his=params.vis_his,
+        vis_aff=params.vis_aff,
+        vis_format=params.vis_format,
         fabric=fabric,
     )
 
-    # The spacial dimensions of the data
-    dshape = list(trains)[0][0].shape[2:]
-    pose = not (pose_dims == 0)
+    if len(trains) == 0:
+        error = (
+            "Training size is 0. Check the 'batch_size' parameter if it's not larger than your existing data."
+            " If you're running distributed learning, each GPU gets an equal fraction of the data, adjust your"
+            " batch size accordingly. If you are using a small dataset, consider using a smaller number of GPUs"
+            " or running on a single GPU. Finally check 'limit' parameter if it is not set to smaller than batch_size."
+        )
+        logging.error(error)
+        raise RuntimeError(error)
+
+    dshape = next(iter(trains))[0].shape[2:]
+    pose = not (params.pose_dims == 0)
 
     # ############################### MODEL ###############################
     vae = model_setup(
-        model_type=model,
+        model_type=params.model,
         input_shape=dshape,
-        channels=channels,
-        depth=depth,
-        lat_dims=lat_dims,
-        pose_dims=pose_dims,
-        bnorm_encoder=bnorm_encoder,
-        bnorm_decoder=bnorm_decoder,
-        n_splats=n_splats,
-        gsd_conv_layers=gsd_conv_layers,
+        channels=params.channels,
+        depth=params.depth,
+        latent_dims=params.latent_dims,
+        pose_dims=params.pose_dims,
+        bnorm_encoder=params.bnorm_encoder,
+        bnorm_decoder=params.bnorm_decoder,
+        n_splats=params.n_splats,
+        gsd_conv_layers=params.gsd_conv_layers,
         device=device,
-        filters=filters,
+        filters=params.filters,
     )
-
-    logging.info(vae)
-
 
     # ################################# LOSS #################################
 
@@ -265,40 +143,45 @@ def train(
         beta=beta_arr,
         gamma=gamma_arr,
         lookup_aff=affinity_matrix,
-        recon_fn=recon_fn,
-        klred=klred,
+        recon_loss=params.recon_loss,
+        klreduction=params.klreduction,
     )
 
     # ############################### OPTIMISER ###############################
     optimizer = configure_optimiser(
-        opt_method=opt_method, model=vae, learning_rate=learning
+        opt_method=params.opt_method, model=vae, learning_rate=params.learning
     )
 
     vae, optimizer = fabric.setup(vae, optimizer)
 
     # ############################### RESTARTS ################################
     e_start = 0
+    t_history = []
+    v_history = []
 
-    if restart:
+    if params.restart:
         if state is None:
             if not os.path.exists("states"):
                 raise RuntimeError(
-                    "There are no existing model states saved or provided via the state flag in config unable to evaluate."
+                    "There are no existing model states saved or provided either via the state flag or in the config. Unable to evaluate."
                 )
             else:
                 state = latest_file("states", ".pt")
                 state = os.path.join("states", state)
 
-        checkpoint = torch.load(state)
+        checkpoint = torch.load(state, weights_only=False)
         vae.load_state_dict(checkpoint["model_state_dict"])
         optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
         e_start = checkpoint["epoch"]
         t_history = checkpoint["t_loss_history"]
         v_history = checkpoint["v_loss_history"]
 
-
     # ########################## TRAINING LOOP ################################
-    for epoch in range(e_start, epochs):
+
+    logging.info("\n")
+    logging.info("############################################### TRAINING")
+
+    for epoch in range(e_start, params.epochs):
 
         # populate loss with new epoch
         t_history.append(np.zeros(4))
@@ -338,7 +221,7 @@ def train(
                 t_history[-1][i] += history_loss[i].item()
             log_progress(
                 "Epoch: [%d/%d] | Batch: [%d/%d]"
-                % (epoch + 1, epochs, batch_number + 1, len(trains))
+                % (epoch + 1, params.epochs, batch_number + 1, len(trains))
             )
 
             # backwards
@@ -364,7 +247,7 @@ def train(
             "KLdiv: %f | Affin: %f | Beta: %f | Gamma: %f"
             % (
                 epoch + 1,
-                epochs,
+                params.epochs,
                 *t_history[-1],
                 beta_arr[epoch],
                 gamma_arr[epoch],
@@ -390,7 +273,7 @@ def train(
                     v_history[-1][i] += v_history_loss[i].item()
                 log_progress(
                     "Epoch: [%d/%d] | Batch: [%d/%d]"
-                    % (epoch + 1, epochs, batch_number + 1, len(vals))
+                    % (epoch + 1, params.epochs, batch_number + 1, len(vals))
                 )
 
                 z_val.extend(v_mu.cpu().detach().numpy())  # store latents
@@ -410,7 +293,7 @@ def train(
                 "KLdiv: %f | Affin: %f | Beta: %f | Gamma: %f"
                 % (
                     epoch + 1,
-                    epochs,
+                    params.epochs,
                     *v_history[-1],
                     beta_arr[epoch],
                     gamma_arr[epoch],
@@ -424,7 +307,7 @@ def train(
                     writer.add_scalar(loss_name, v_history[-1][i], epoch)
 
             # ########################## TEST #####################################
-            if (epoch + 1) % settings.FREQ_EVAL == 0:
+            if params.freq_eval != 0 and (epoch + 1) % params.freq_eval == 0:
                 for batch_number, (t, ys, aff, meta_data) in enumerate(
                     tests
                 ):  # tests empty if no 'test' dir
@@ -441,26 +324,43 @@ def train(
                     if pose:
                         p_test.extend(tlat_pose.cpu().detach().numpy())
 
-                    filename_test.extend(as_list(meta_data.get("filename", [])))
+                    filename_test.extend(
+                        as_list(meta_data.get("filename", []))
+                    )
                     meta_test.extend(as_list(meta_data.get("meta", [])))
                     x_test.extend(as_list(meta_data.get("image", [])))
                     xhat_test.extend(vis.format(t_hat, data_dim))
 
                     log_progress(
                         "Epoch: [%d/%d] | Batch: [%d/%d]"
-                        % (epoch + 1, epochs, batch_number + 1, len(tests))
+                        % (
+                            epoch + 1,
+                            params.epochs,
+                            batch_number + 1,
+                            len(tests),
+                        )
                     )
-                logging.info("Evaluation : Epoch: [%d/%d]" % (epoch + 1, epochs))
+                logging.info(
+                    "Evaluation : Epoch: [%d/%d]" % (epoch + 1, params.epochs)
+                )
             logging.info("\n")  # end of training round
 
         needs_meta_df = (
             (
-                rank_zero
-                and settings.VIS_EMB
-                and settings.VIS_DYN
-                and (epoch + 1) % settings.FREQ_EMB == 0
+                # visualising embedding
+                params.vis_emb
+                and (epoch + 1) % params.freq_emb == 0
             )
-            or ((epoch + 1) % settings.FREQ_STA == 0)
+            or (
+                # visualising dynamic embedding
+                params.vis_dynamic
+                and (epoch + 1) % params.freq_dynamic == 0
+            )
+            or (
+                # saving states of the model
+                params.freq_sta != 0
+                and (epoch + 1) % params.freq_sta == 0
+            )
         )
         if needs_meta_df:
             meta_df = build_meta_df(
@@ -505,50 +405,101 @@ def train(
             )
 
         # ########################## VISUALISE ################################
+        logging.info("")
 
-        if classes is not None:
-            classes_list = pd.read_csv(classes).columns.tolist()
-        else:
-            classes_list = []
+        static_embedding_due = (
+            rank_zero and params.vis_emb and (epoch + 1) % params.freq_emb == 0
+        )
+        dynamic_embedding_due = (
+            rank_zero
+            and params.vis_dynamic
+            and (epoch + 1) % params.freq_dynamic == 0
+        )
+        if static_embedding_due or dynamic_embedding_due:
+            latent_columns = [
+                col for col in combined_meta_df if col.startswith("lat")
+            ]
+            embedding_xs = combined_meta_df[latent_columns].to_numpy()
+            embedding_ys = combined_meta_df["id"].to_numpy().copy()
+            embedding_ys[combined_meta_df["mode"].to_numpy() == "tst"] = "test"
+            latent_embedding = utils_learning.tsne_embedding(embedding_xs)
+            if static_embedding_due and pose:
+                pose_columns = [
+                    col for col in combined_meta_df if col.startswith("pos")
+                ]
+                pose_xs = combined_meta_df[pose_columns].to_numpy()
+                pose_embedding = utils_learning.tsne_embedding(pose_xs)
+            logging.info("")
 
         # visualise accuracy: confusion and F1 scores
-        if rank_zero and settings.VIS_ACC and (epoch + 1) % settings.FREQ_ACC == 0:
-            train_acc, val_acc, _, ypred_train, ypred_val = accuracy(
-                z_train, y_train, z_val, y_val, classifier=classifier
+        if (
+            params.vis_acc
+            and params.freq_acc != 0
+            and (epoch + 1) % params.freq_acc == 0
+        ):
+            combined_accuracy_data = utils_learning.combine_accuracy_data(
+                z_train,
+                y_train,
+                z_val,
+                y_val,
+                rank_zero=rank_zero,
+                world_size=fabric.world_size,
             )
 
-            logging.info(
-                "------------------->>> Accuracy: Train: %f | Val: %f\n"
-                % (train_acc, val_acc),
-            )
-            vis.accuracy_plot(
-                y_train,
-                ypred_train,
-                y_val,
-                ypred_val,
-                classes,
-                epoch=epoch,
-                writer=writer,
-            )
+            if rank_zero:
+                assert combined_accuracy_data is not None
+                (
+                    z_train_all,
+                    y_train_all,
+                    z_val_all,
+                    y_val_all,
+                ) = combined_accuracy_data
+                (
+                    train_acc,
+                    val_acc,
+                    _,
+                    ypred_train,
+                    ypred_val,
+                ) = utils_learning.accuracy(
+                    z_train_all,
+                    y_train_all,
+                    z_val_all,
+                    y_val_all,
+                    classifier=params.classifier,
+                )
 
-            vis.f1_plot(
-                y_train,
-                ypred_train,
-                y_val,
-                ypred_val,
-                classes,
-                epoch=epoch,
-                writer=writer,
-            )
+                logging.info(
+                    "------------------->>> Accuracy: Train: %f | Val: %f\n"
+                    % (train_acc, val_acc),
+                )
+                vis.accuracy_plot(
+                    y_train_all,
+                    ypred_train,
+                    y_val_all,
+                    ypred_val,
+                    epoch=epoch,
+                    writer=writer,
+                    vis_format=params.vis_format,
+                )
+
+                vis.f1_plot(
+                    y_train_all,
+                    ypred_train,
+                    y_val_all,
+                    ypred_val,
+                    epoch=epoch,
+                    writer=writer,
+                    vis_format=params.vis_format,
+                )
 
         # visualise loss
-        if rank_zero and settings.VIS_LOS and epoch > 0:
+        if rank_zero and params.vis_los and epoch > 0:
             p = [
                 len(trains),
-                depth,
-                channels,
-                lat_dims,
-                learning,
+                params.depth,
+                params.channels,
+                params.latent_dims,
+                params.learning,
                 beta_arr[epoch],
                 gamma_arr[epoch],
             ]
@@ -559,10 +510,11 @@ def train(
                 t_history,
                 v_history,
                 p=p,
+                vis_format=params.vis_format,
             )
 
         # visualise reconstructions - last batch
-        if rank_zero and settings.VIS_REC and (epoch + 1) % settings.FREQ_REC == 0:
+        if rank_zero and params.vis_rec and (epoch + 1) % params.freq_rec == 0:
             vis.recon_plot(
                 x,
                 x_hat,
@@ -571,6 +523,7 @@ def train(
                 mode="trn",
                 epoch=epoch,
                 writer=writer,
+                vis_format=params.vis_format,
             )
             vis.recon_plot(
                 v,
@@ -580,62 +533,62 @@ def train(
                 mode="val",
                 epoch=epoch,
                 writer=writer,
+                vis_format=params.vis_format,
             )
 
         # visualise mean and logvar similarity matrix
-        if rank_zero and settings.VIS_SIM and (epoch + 1) % settings.FREQ_SIM == 0:
+        if rank_zero and params.vis_sim and (epoch + 1) % params.freq_sim == 0:
             vis.latent_space_similarity_plot(
                 z_train,
                 np.array(y_train),
                 mode="_train",
                 epoch=epoch,
-                classes_order=classes_list,
+                affinity_matrix=params.affinity,
+                vis_format=params.vis_format,
             )
             vis.latent_space_similarity_plot(
                 z_val,
                 np.array(y_val),
                 mode="_valid",
                 epoch=epoch,
-                classes_order=classes_list,
+                affinity_matrix=params.affinity,
+                vis_format=params.vis_format,
             )
 
         # visualise embeddings
-        if rank_zero and settings.VIS_EMB and (epoch + 1) % settings.FREQ_EMB == 0:
-            if len(tests) != 0:
-                xs = np.r_[z_train, z_val, z_test]
-                ys = np.r_[
-                    y_train,
-                    y_val,
-                    np.full(shape=len(z_test), fill_value="test"),
-                ]
-                if pose:
-                    ps = np.r_[p_train, p_val, p_test]
-            else:
-                xs = np.r_[z_train, z_val]
-                ys = np.r_[y_train, y_val]
-                if pose:
-                    ps = np.r_[p_train, p_val]
-
-            vis.latent_embed_plot_tsne(xs, ys, epoch=epoch, writer=writer)
-            vis.latent_embed_plot_umap(
-                xs, ys, classes_list, epoch=epoch, writer=writer
+        if static_embedding_due:
+            vis.latent_embed_plot_tsne(
+                embedding_xs,
+                embedding_ys,
+                epoch=epoch,
+                writer=writer,
+                vis_format=params.vis_format,
+                embedding=latent_embedding,
             )
+
             if pose:
                 vis.latent_embed_plot_tsne(
-                    ps, ys, epoch=epoch, writer=writer, mode="pose"
-                )
-                vis.latent_embed_plot_umap(
-                    ps, ys, epoch=epoch, writer=writer, mode="pose"
+                    pose_xs,
+                    embedding_ys,
+                    epoch=epoch,
+                    writer=writer,
+                    mode="pose",
+                    vis_format=params.vis_format,
+                    embedding=pose_embedding,
                 )
 
-            if settings.VIS_DYN:
-                # merge img and rec into one image for display in altair
-                combined_meta_df["image"] = combined_meta_df["image"].apply(vis.merge)
-                vis.dyn_latentembed_plot(combined_meta_df, epoch, embedding="umap")
-                vis.dyn_latentembed_plot(combined_meta_df, epoch, embedding="tsne")
+        if dynamic_embedding_due:
+            # merge img and rec into one image for display in altair
+            dynamic_meta_df = combined_meta_df.copy()
+            dynamic_meta_df["image"] = dynamic_meta_df["image"].apply(
+                vis.merge
+            )
+            vis.dyn_latentembed_plot(
+                dynamic_meta_df, epoch, embedding=latent_embedding
+            )
 
         # visualise latent disentanglement
-        if rank_zero and settings.VIS_DIS and (epoch + 1) % settings.FREQ_DIS == 0:
+        if rank_zero and params.vis_dis and (epoch + 1) % params.freq_dis == 0:
             if not pose:
                 poses = None
             else:
@@ -645,32 +598,40 @@ def train(
                 z_train,
                 vae,
                 device,
-                poses=poses,
+                poses=p_train if pose else None,
+                vis_format=params.vis_format,
             )
 
         # visualise pose disentanglement
-        if rank_zero and pose and settings.VIS_POS and (epoch + 1) % settings.FREQ_POS == 0:
+        if (
+            rank_zero
+            and pose
+            and params.vis_pos
+            and (epoch + 1) % params.freq_pos == 0
+        ):
             vis.pose_disentanglement_plot(
                 dshape,
                 z_train,
                 p_train,
                 vae,
                 device,
+                vis_format=params.vis_format,
             )
 
-            if settings.VIS_POSE_CLASS is not None:
+            if params.vis_pose_class is not None:
                 vis.pose_class_disentanglement_plot(
                     dshape,
                     z_train,
                     y_train,
-                    settings.VIS_POSE_CLASS,
+                    params.vis_pose_class,
                     p_train,
                     vae,
                     device,
+                    vis_format=params.vis_format,
                 )
 
         # visualise interpolations
-        if rank_zero and settings.VIS_INT and (epoch + 1) % settings.FREQ_INT == 0:
+        if rank_zero and params.vis_int and (epoch + 1) % params.freq_int == 0:
             if len(tests) != 0:
                 xs = np.r_[z_train, z_val, z_test]
                 ys = np.r_[y_train, y_val, np.ones(len(z_test))]
@@ -686,15 +647,16 @@ def train(
                 else:
                     ps = None
 
-            if settings.VIS_Z_N_INT is not None:
+            if params.vis_z_n_int is not None:
                 vis.latent_4enc_interpolate_plot(
                     dshape,
                     xs,
                     ys,
                     vae,
                     device,
-                    settings.VIS_Z_N_INT,
+                    params.vis_z_n_int,
                     poses=ps,
+                    vis_format=params.vis_format,
                 )
 
             vis.interpolations_plot(
@@ -704,22 +666,23 @@ def train(
                 vae,
                 device,
                 poses=ps,  # do we need val and test here?
+                vis_format=params.vis_format,
             )
         # ########################## SAVE STATE ###############################
-        if (epoch + 1) % settings.FREQ_STA == 0:
+        if params.freq_sta != 0 and (epoch + 1) % params.freq_sta == 0:
             if rank_zero:
                 if not os.path.exists("states"):
                     os.mkdir("states")
 
                 mname = (
                     "avae_"
-                    + str(settings.date_time_run)
+                    + str(params.date_time_run)
                     + "_E"
                     + str(epoch)
                     + "_"
-                    + str(lat_dims)
+                    + str(params.latent_dims)
                     + "_"
-                    + str(pose_dims)
+                    + str(params.pose_dims)
                     + ".pt"
                 )
 
@@ -744,13 +707,13 @@ def train(
 
                 filename = (
                     "meta_"
-                    + str(settings.date_time_run)
+                    + str(params.date_time_run)
                     + "_E"
                     + str(epoch)
-                    + "_"
-                    + str(lat_dims)
-                    + "_"
-                    + str(pose_dims)
+                    + "_L"
+                    + str(params.latent_dims)
+                    + "_P"
+                    + str(params.pose_dims)
                     + ".pkl"
                 )
                 combined_meta_df.to_pickle(os.path.join("states", filename))

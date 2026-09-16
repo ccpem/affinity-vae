@@ -1,11 +1,13 @@
 import unittest
 
 import pytest
-from torch import nn, randn
+import torch
 
-from avae.decoders.decoders import Decoder
-from avae.encoders.encoders import Encoder
+from avae.decoders.decoders import Decoder, DecoderA, DecoderB
+from avae.decoders.differentiable import GaussianSplatDecoder
+from avae.encoders.encoders import Encoder, EncoderA, EncoderB
 from avae.models import AffinityVAE as avae
+from avae.models import model_setup
 
 
 class ModelInstanceTest(unittest.TestCase):
@@ -47,7 +49,7 @@ class ModelInstanceTest(unittest.TestCase):
 
         self.vae_2d = avae(self.encoder_2d, self.decoder_2d)
 
-        self.x = randn(14, 1, 64, 64, 64)
+        self.x = torch.randn(14, 1, 64, 64, 64)
 
     def test_model_instance(self):
         """Test instantiation of the model."""
@@ -56,24 +58,28 @@ class ModelInstanceTest(unittest.TestCase):
 
     def test_model_3D(self):
         """Test that model is instantiated with 3D convolutions."""
-        assert isinstance(self.vae.encoder.conv_enc[0], nn.Conv3d)
-        assert isinstance(self.vae.decoder.conv_dec[-1], nn.ConvTranspose3d)
+        assert isinstance(self.vae.encoder.conv_enc[0], torch.nn.Conv3d)
+        assert isinstance(
+            self.vae.decoder.conv_dec[-1], torch.nn.ConvTranspose3d
+        )
 
     def test_model_2D(self):
         """Test that model is instantiated with 2D convolutions."""
 
-        assert isinstance(self.vae_2d.encoder.conv_enc[0], nn.Conv2d)
-        assert isinstance(self.vae_2d.decoder.conv_dec[-1], nn.ConvTranspose2d)
+        assert isinstance(self.vae_2d.encoder.conv_enc[0], torch.nn.Conv2d)
+        assert isinstance(
+            self.vae_2d.decoder.conv_dec[-1], torch.nn.ConvTranspose2d
+        )
 
     def test_model_forward(self):
 
         y = self.vae(self.x)
 
         self.assertEqual(self.x.shape, y[0].shape)
-        self.assertEqual(randn(14, 16).shape, y[1].shape)
-        self.assertEqual(randn(14, 16).shape, y[2].shape)
-        self.assertEqual(randn(14, 16).shape, y[3].shape)
-        self.assertEqual(randn(14, 3).shape, y[4].shape)
+        self.assertEqual(torch.randn(14, 16).shape, y[1].shape)
+        self.assertEqual(torch.randn(14, 16).shape, y[2].shape)
+        self.assertEqual(torch.randn(14, 16).shape, y[3].shape)
+        self.assertEqual(torch.randn(14, 3).shape, y[4].shape)
 
     def test_model_reproducibility(self):
 
@@ -90,7 +96,7 @@ class ModelInstanceTest(unittest.TestCase):
 class ModelParamsTest(unittest.TestCase):
     def setUp(self):
         self.input_shape = (64, 64)
-        self.input = randn(14, 1, 64, 64)
+        self.input = torch.randn(14, 1, 64, 64)
         self.capacity_params = [9, 64]
         self.depth_params = [2, 4]
         self.filters_params = [[8, 16], [5, 9]]
@@ -266,7 +272,7 @@ class ModelParamsTest(unittest.TestCase):
     def test_depth(self):
 
         # no conv
-        input = randn(14, 1, 128)
+        input = torch.randn(14, 1, 128)
         enc = Encoder(
             input_shape=(128,),
             depth=0,
@@ -382,3 +388,50 @@ class ModelParamsTest(unittest.TestCase):
         model = avae(enc, dec)
         output = model(self.input)
         self.assertEqual(output[0].shape, self.input.shape)
+
+
+class ModelSetupTest(unittest.TestCase):
+    def setup_model(self, model_type, pose_dims=0, filters=None):
+        return model_setup(
+            model_type=model_type,
+            input_shape=(8, 8),
+            channels=2,
+            depth=2,
+            latent_dims=3,
+            pose_dims=pose_dims,
+            bnorm_encoder=True,
+            bnorm_decoder=True,
+            n_splats=4,
+            gsd_conv_layers=0,
+            device=torch.device("cpu"),
+            filters=filters,
+        )
+
+    def test_cnn_custom_filters_and_batchnorm(self):
+        model = self.setup_model("cnn", filters=[2, 4])
+        inputs = torch.randn(2, 1, 8, 8)
+
+        self.assertEqual(model.encoder.filters.tolist(), [2, 4])
+        self.assertEqual(model.decoder.filters.tolist(), [2, 4])
+        self.assertEqual(len(model.encoder.norm_enc), 2)
+        self.assertEqual(len(model.decoder.norm_dec), 1)
+        self.assertEqual(model(inputs)[0].shape, inputs.shape)
+
+    def test_legacy_model_factories_remain_available(self):
+        legacy_types = {
+            "u": (Encoder, Decoder),
+            "a": (EncoderA, DecoderA),
+            "b": (EncoderB, DecoderB),
+        }
+
+        for model_type, expected_types in legacy_types.items():
+            with self.subTest(model=model_type):
+                model = self.setup_model(model_type, pose_dims=1)
+                self.assertIsInstance(model.encoder, expected_types[0])
+                self.assertIsInstance(model.decoder, expected_types[1])
+
+    def test_gsd_uses_generic_encoder(self):
+        model = self.setup_model("gsd", pose_dims=1, filters=[2, 4])
+
+        self.assertIsInstance(model.encoder, Encoder)
+        self.assertIsInstance(model.decoder, GaussianSplatDecoder)

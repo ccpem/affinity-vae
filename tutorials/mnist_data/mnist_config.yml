@@ -1,40 +1,46 @@
 #### Data parameters
-
 datapath: mnist_data/images_train
 affinity: mnist_data/affinity_mnist.csv
 classes: mnist_data/classes_mnist.csv
-restart: False
-limit: 1000
-split: 20
 datatype: npy
+limit: 1000
+no_val_drop: true
+split: 20
+date_time_run: mnist-tutorial
+new_out: false
 
 #### Data processing parameters
-shift_mean: False
-gaussian_blur: False
-normalise: False
-rescale: False
+shift_min: false
+normalise: false
+gaussian_blur: false
 
 #### Network parameters
-
 depth: 4
 channels: 8
 latent_dims: 16
 pose_dims: 1
+model: cnn
+n_splats: 128
+gsd_conv_layers: 0
+bnorm_encoder: false
+bnorm_decoder: false
 
 #### Training parameters
-
-no_val_drop: true
 epochs: 1000
 batch: 128
 learning: 0.0001
+opt_method: adam
+classifier: NN
 gpu: true
-freq_sta: 10 # frequency of state saves
+strategy: auto
+freq_sta: 10
+freq_eval: 10
 
 #### Loss parameters
-
 beta: 0.0001
 gamma: 0.001
-loss_fn: MSE
+recon_loss: MSE
+klreduction: mean
 
 #### Cyclical annealing parameters for beta
 beta_min: 0
@@ -48,34 +54,38 @@ gamma_cycle: 5
 gamma_ratio: 0.5
 cyc_method_gamma: flat
 
-#### Evaluation parameters
-eval: false
-freq_eval: 10 # frequency of test evaluation (if test present)
+#### Restart and evaluation parameters
+evaluate: false
+restart: false
 
 #### Visualization parameters
-vis_los: false # loss on/off (every epoch from epoch 2)
-vis_acc: false # confusion matrices and F1 scores on/off (frequency controlled)
-vis_rec: false # reconstructions on/off (frequency controlled)
-vis_emb: false # latent embeddings on/off (frequency controlled)
-vis_int: false # latent interpolations on/off (frequency controlled)
-vis_dis: false # latent disentanglement on/off (frequency controlled)
-vis_pos: false # pose disentanglement on/off (frequency controlled)
-vis_pose_class: 1,2 # comma separated string eg. 1,2
-vis_cyc: false # beta for cyclic anealing on/off (once per run)
-vis_aff: false # affinity matrix on/off (once per run)
-vis_his: false # class distribution histogram on/off (once per run)
-vis_sim: false # latent space similarity matrix on/off
-vis_all: true # sets all above to on/off
-dynamic: true # dynamic embedding visualisations on/off (freq same as freq_emb)
+vis_format: png
+tensorboard: false
+vis_his: false
+vis_aff: false
+vis_cyc: false
+vis_los: false
+vis_acc: false
+vis_rec: false
+vis_emb: false
+vis_dynamic: true
+vis_sim: false
+vis_int: false
+vis_dis: false
+vis_pos: false
+vis_pose_class: "1,2"
+vis_all: true
 
-freq_acc: 10 # frequency of accuracy visualisation
-freq_rec: 10 # frequency of reconstruction visualisation
-freq_emb: 10 # frequency of latent embedding visualisation
-freq_int: 10 # frequency of latent interpolation visualisation
-freq_dis: 10 # frequency of latent disentanglement visualisation
-freq_pos: 10 # frequency of pose disentanglement visualisation
-freq_sim: 10 # frequency of similarity matrix visualisation
-freq_all: 10 # sets all above to the same value (inc freq_sta and freq_eval)
+#### Visualization frequencies
+freq_acc: 10
+freq_rec: 10
+freq_emb: 10
+freq_dynamic: 10
+freq_sim: 10
+freq_int: 10
+freq_dis: 10
+freq_pos: 10
+freq_all: 10
 
-#### debug parameters
+#### Debug parameters
 debug: false

@@ -1,5 +1,5 @@
 import enum
-from typing import Tuple
+import typing
 
 import torch
 
@@ -122,7 +122,7 @@ class RotatedCoordinates(torch.nn.Module):
 
     def __init__(
         self,
-        shape: Tuple[int],
+        shape: typing.Tuple[int],
         *,
         default_axis: CartesianAxes = CartesianAxes.Z,
         device: torch.device = torch.device("cpu"),

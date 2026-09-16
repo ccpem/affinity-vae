@@ -1,18 +1,18 @@
 # code @quantumjot extracted from https://github.com/quantumjot/vne/blob/broadcast/vne/utils/napari.py
 
 import enum
-from typing import Any
+import typing
 
+import matplotlib.backends.backend_qt5agg
+import matplotlib.figure
 import matplotlib.pyplot as plt
 import napari
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
+import qtpy
 import torch
 import umap
-from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg
-from matplotlib.figure import Figure
-from qtpy import QtCore, QtWidgets
 
 
 class CartesianAxes(enum.Enum):
@@ -63,17 +63,17 @@ def scale_to_slider(x, min_val: float, max_val: float) -> float:
     return np.clip(((scaled_value)) * 1000, 0, 1000).astype(int)
 
 
-class MplCanvas(FigureCanvasQTAgg):
+class MplCanvas(matplotlib.backends.backend_qt5agg.FigureCanvasQTAgg):
     def __init__(self, parent=None, width=6, height=6, dpi=100):
         with plt.style.context("dark_background"):
-            fig = Figure(
+            fig = matplotlib.figure.Figure(
                 figsize=(width, height), dpi=dpi, frameon=False, facecolor="k"
             )
             self.axes = fig.add_subplot(111)
         super(MplCanvas, self).__init__(fig)
 
 
-class GenerativeAffinityVAEWidget(QtWidgets.QWidget):
+class GenerativeAffinityVAEWidget(qtpy.QtWidgets.QWidget):
     def __init__(
         self,
         napari_viewer: napari.Viewer,
@@ -97,8 +97,8 @@ class GenerativeAffinityVAEWidget(QtWidgets.QWidget):
         self._latent_dims = int(latent_dims)  # Number of latent dimensions
         self.cartesian = True  # Keeping this as false and as a placeholder as we havent implemented cartesian pose space yet
 
-        self._main_layout = QtWidgets.QVBoxLayout()
-        self._tabs = QtWidgets.QTabWidget()
+        self._main_layout = qtpy.QtWidgets.QVBoxLayout()
+        self._tabs = qtpy.QtWidgets.QTabWidget()
         self._widgets: dict = {}
 
         self.add_pose_widget()
@@ -134,7 +134,7 @@ class GenerativeAffinityVAEWidget(QtWidgets.QWidget):
         self._pose_range_max = pose_space.max(axis=0)
 
         if self.manifold == "umap":
-            self._mapper = umap.UMAP(random_state=42)
+            self._mapper = umap.UMAP(random_state=42, n_jobs=1)
             self._embedding = self._mapper.fit_transform(latent_space)
         elif self.manifold == "load":
             self._embedding = self._meta_df[
@@ -158,13 +158,13 @@ class GenerativeAffinityVAEWidget(QtWidgets.QWidget):
 
     def add_pose_widget(self) -> None:
         """Add widgets to manipulate the model pose space."""
-        pose_axes = QtWidgets.QComboBox()
+        pose_axes = qtpy.QtWidgets.QComboBox()
         if self.cartesian:
             pose_axes.addItems(["X", "Y", "Z"])
         else:
             for dim in range(self.pose_dims):
                 pose_axes.addItems(["pose" + str(dim)])
-        pose_value = QtWidgets.QSlider(QtCore.Qt.Horizontal)
+        pose_value = qtpy.QtWidgets.QSlider(qtpy.QtCore.Qt.Horizontal)
         pose_value.setRange(0, 1000)
         pose_value.setValue(500)
         pose_value.setMinimumWidth(300)
@@ -176,14 +176,14 @@ class GenerativeAffinityVAEWidget(QtWidgets.QWidget):
 
         self._widgets.update(pose_widgets)
 
-        layout = QtWidgets.QFormLayout()
+        layout = qtpy.QtWidgets.QFormLayout()
         for label, widget in pose_widgets.items():
             if label == "theta":
                 widget.valueChanged.connect(self.update_reconstruction)
-            label_widget = QtWidgets.QLabel(label)
+            label_widget = qtpy.QtWidgets.QLabel(label)
             layout.addRow(label_widget, widget)
 
-        pose_widget = QtWidgets.QGroupBox("Pose")
+        pose_widget = qtpy.QtWidgets.QGroupBox("Pose")
         pose_widget.setLayout(layout)
 
         self._main_layout.addWidget(pose_widget)
@@ -192,7 +192,7 @@ class GenerativeAffinityVAEWidget(QtWidgets.QWidget):
         """Add widgets to manipulate the model latent space."""
 
         def _z_widget(idx):
-            z_value = QtWidgets.QSlider(QtCore.Qt.Horizontal)
+            z_value = qtpy.QtWidgets.QSlider(qtpy.QtCore.Qt.Horizontal)
             z_value.setRange(0, 1000)
             z_value.setValue(500)
             z_value.setMinimumWidth(300)
@@ -204,22 +204,22 @@ class GenerativeAffinityVAEWidget(QtWidgets.QWidget):
 
         self._widgets.update(latent_widgets)
 
-        layout = QtWidgets.QFormLayout()
+        layout = qtpy.QtWidgets.QFormLayout()
         for label, widget in latent_widgets.items():
             widget.valueChanged.connect(self.update_reconstruction)
-            label_widget = QtWidgets.QLabel(label)
+            label_widget = qtpy.QtWidgets.QLabel(label)
             layout.addRow(label_widget, widget)
 
-        tab = QtWidgets.QWidget()
+        tab = qtpy.QtWidgets.QWidget()
         tab.setLayout(layout)
         self._tabs.addTab(tab, "Latents")
 
     def add_manifold_widget(self) -> None:
         manifold_widget = MplCanvas()
         manifold_widget.axes.set_title("Latent manifold")
-        layout = QtWidgets.QVBoxLayout()
+        layout = qtpy.QtWidgets.QVBoxLayout()
         layout.addWidget(manifold_widget)
-        tab = QtWidgets.QWidget()
+        tab = qtpy.QtWidgets.QWidget()
         tab.setLayout(layout)
 
         manifold_widget.figure.canvas.mpl_connect(
@@ -263,7 +263,7 @@ class GenerativeAffinityVAEWidget(QtWidgets.QWidget):
         )
         return pose, z
 
-    def inverse_map_manifold_to_z(self, event: Any = None) -> None:
+    def inverse_map_manifold_to_z(self, event: typing.Any = None) -> None:
 
         if event is None:
             pt = self._embedding[0].reshape(
@@ -303,7 +303,7 @@ class GenerativeAffinityVAEWidget(QtWidgets.QWidget):
 
         for idx in range(self._latent_dims):
             slider = self._widgets[f"z{idx}"]
-            with QtCore.QSignalBlocker(slider):
+            with qtpy.QtCore.QSignalBlocker(slider):
                 slider.setValue(transformed[idx])
 
     def get_clicked_index(self, test_pt) -> str | None:

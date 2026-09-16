@@ -85,7 +85,7 @@ class AVAELoss:
     lookup_aff : np.ndarray [M, M]
         A square symmetric matrix where each column and row is the index of an
         object class from the training set, consisting of M different classes.
-    recon_fn : 'MSE' or 'BCE'
+    recon_loss : 'MSE' or 'BCE'
         Function used for reconstruction loss. BCE uses Binary
         Cross-Entropy for binary data and MSE uses Mean
         Squared Error for real-valued data.
@@ -98,12 +98,12 @@ class AVAELoss:
         beta: list[float],
         gamma: list[float],
         lookup_aff: torch.Tensor | None = None,
-        recon_fn: str = "MSE",
-        klred: str = "mean",
+        recon_loss: str = "MSE",
+        klreduction: str = "mean",
     ):
         self.device = device
-        self.recon_fn = recon_fn
-        self.klred = klred
+        self.recon_loss = recon_loss
+        self.klreduction = klreduction
         self.beta = beta
 
         self.affinity_loss = None
@@ -182,11 +182,11 @@ class AVAELoss:
             )
 
         # recon loss
-        if self.recon_fn == "BCE":
+        if self.recon_loss == "BCE":
             recon_loss = torch.nn.functional.binary_cross_entropy(
                 x, recon_x, reduction="mean"
             )
-        elif self.recon_fn == "MSE":
+        elif self.recon_loss == "MSE":
             recon_loss = torch.nn.functional.mse_loss(
                 x, recon_x, reduction="mean"
             )
@@ -197,11 +197,11 @@ class AVAELoss:
             )
 
         # kldiv loss
-        if self.klred == "mean":
+        if self.klreduction == "mean":
             kldivergence = -0.5 * torch.mean(
                 1 + logvar - mu.pow(2) - logvar.exp()
             )
-        elif self.klred == "sum":
+        elif self.klreduction == "sum":
             kldivergence = torch.mean(
                 -0.5
                 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp(), axis=1),

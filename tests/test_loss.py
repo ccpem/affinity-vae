@@ -9,7 +9,6 @@ from avae.decoders.decoders import Decoder
 from avae.encoders.encoders import Encoder
 from avae.loss import AVAELoss
 from avae.models import AffinityVAE as avae
-from avae.utils_learning import set_device
 from tests import testdata_mrc
 
 torch.manual_seed(0)
@@ -26,13 +25,12 @@ class LossTest(unittest.TestCase):
         self.affinity = pd.read_csv("affinity_fsc_10.csv").to_numpy(
             dtype=np.float32
         )
-        device = set_device(False)
         self.loss = AVAELoss(
-            device=device,
+            device=torch.device("cpu"),
             beta=[1],
             gamma=[1],
             lookup_aff=self.affinity,
-            recon_fn="MSE",
+            recon_loss="MSE",
         )
         self.encoder_3d = Encoder(
             capacity=8,
@@ -89,7 +87,7 @@ class LossTest(unittest.TestCase):
             [1],
             [0],
             lookup_aff=self.affinity,
-            recon_fn="MSE",
+            recon_loss="MSE",
         )
 
         x_hat, lat_mu, lat_logvar, _, _ = self.vae(x)

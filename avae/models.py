@@ -1,18 +1,16 @@
+import abc
 import logging
-from abc import ABC, abstractmethod
 
 import numpy as np
 import torch
 import torch.nn as nn
 
-from .base import SpatialDims, dims_after_pooling, set_layer_dim
-from .utils_gpu import set_device
-
-
 from avae.base import AbstractAffinityVAE
 from avae.decoders.decoders import Decoder, DecoderA, DecoderB
 from avae.decoders.differentiable import GaussianSplatDecoder
 from avae.encoders.encoders import Encoder, EncoderA, EncoderB
+
+from .base import SpatialDims, dims_after_pooling, set_layer_dim
 
 
 def model_setup(
@@ -20,7 +18,7 @@ def model_setup(
     input_shape: tuple,
     channels: int,
     depth: int,
-    lat_dims: int,
+    latent_dims: int,
     pose_dims: int,
     bnorm_encoder: bool,
     bnorm_decoder: bool,
@@ -34,14 +32,15 @@ def model_setup(
     Parameters
     ----------
     model_type : str
-        The type of model to create. Must be one of : a, b, u or gsd.
+        The model to create: cnn or gsd. The u, a, and b aliases are retained
+        for legacy checkpoints.
     input_shape : tuple
         The size of the input.
     channels : int
         The number of channels in the model.
     depth : int
         The depth of the model.
-    lat_dims : int
+    latent_dims : int
         The number of latent dimensions.
     pose_dims : int
         The number of pose dimensions.
@@ -59,18 +58,19 @@ def model_setup(
         The filters to use in the model.
 
     """
+    logging.info("\n")
+    logging.info("############################################### MODEL")
+    logging.info(f"Setting up the model...")
 
     if filters is not None:
-        filters = np.array(
-            np.array(filters).replace(" ", "").split(","), dtype=np.int64
-        )
+        filters = np.asarray(filters, dtype=np.int64)
 
     if model_type == "a":
         encoder = EncoderA(
             input_shape,
             channels,
             depth,
-            lat_dims,
+            latent_dims,
             pose_dims,
             bnorm=bnorm_encoder,
         )
@@ -78,20 +78,24 @@ def model_setup(
             input_shape,
             channels,
             depth,
-            lat_dims,
+            latent_dims,
             pose_dims,
             bnorm=bnorm_decoder,
         )
     elif model_type == "b":
-        encoder = EncoderB(input_shape, channels, depth, lat_dims, pose_dims)
-        decoder = DecoderB(input_shape, channels, depth, lat_dims, pose_dims)
-    elif model_type == "u":
+        encoder = EncoderB(
+            input_shape, channels, depth, latent_dims, pose_dims
+        )
+        decoder = DecoderB(
+            input_shape, channels, depth, latent_dims, pose_dims
+        )
+    elif model_type in {"cnn", "u"}:
         encoder = Encoder(
             input_shape=input_shape,
             capacity=channels,
             filters=filters,
             depth=depth,
-            latent_dims=lat_dims,
+            latent_dims=latent_dims,
             pose_dims=pose_dims,
             bnorm=bnorm_encoder,
         )
@@ -100,23 +104,24 @@ def model_setup(
             capacity=channels,
             filters=filters,
             depth=depth,
-            latent_dims=lat_dims,
+            latent_dims=latent_dims,
             pose_dims=pose_dims,
             bnorm=bnorm_decoder,
         )
     elif model_type == "gsd":
-        encoder = EncoderA(
-            input_shape,
-            channels,
-            depth,
-            lat_dims,
-            pose_dims,
+        encoder = Encoder(
+            input_shape=input_shape,
+            capacity=channels,
+            filters=filters,
+            depth=depth,
+            latent_dims=latent_dims,
+            pose_dims=pose_dims,
             bnorm=bnorm_encoder,
         )
         decoder = GaussianSplatDecoder(
             input_shape,
             n_splats=n_splats,
-            latent_dims=lat_dims,
+            latent_dims=latent_dims,
             output_channels=gsd_conv_layers,
             device=device,
             pose_dims=pose_dims,
@@ -125,10 +130,12 @@ def model_setup(
         raise ValueError(
             "Invalid model type",
             model_type,
-            "must be one of : a, b, u or gsd",
+            "must be one of: cnn or gsd",
         )
 
     vae = AffinityVAE(encoder, decoder)
+
+    logging.info(vae)
 
     return vae
 

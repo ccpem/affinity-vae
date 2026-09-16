@@ -79,7 +79,7 @@ You can also configure the run by passing arguments to the `run.py` script as
 shown in the main README file and in the following example:
 
 ```bash
-python path/to/affinity-vae/run.py --config_file /absolute/path/to/mnist_data/mnist_config.yml --beta 0.1 --gamma 0.01 --lr 0.001 --epochs 200 --new_out
+python path/to/affinity-vae/run.py --config_file /absolute/path/to/mnist_data/mnist_config.yml --beta 0.1 --gamma 0.01 --learning 0.001 --epochs 200 --new_out
 ```
 
 Here the command line arguments override the values in the config file.
@@ -92,7 +92,7 @@ test set by stepping into the new directory and running the following. The outpu
 
 ```bash
 cd path/to/new_out
-python path/to/affinity-vae/run.py --config_file /absolute/path/to/mnist_data/mnist_config.yml  --datapath /absolute/path/to/mnist_data/images_test/ --eval
+python path/to/affinity-vae/run.py --config_file /absolute/path/to/mnist_data/mnist_config.yml --datapath /absolute/path/to/mnist_data/images_test/ --evaluate
 ```
 
 _Note_: During training we've left the class `9` out, so we can use it for
@@ -102,7 +102,7 @@ You can also restart training from a checkpoint by running
 
 ```bash
 cd path/to/new_out
-python path/to/affinity-vae/run.py --config_file /absolute/path/to/mnist_data/mnist_config.yml  --restart --epochs 2000 --data_path /absolute/path/to/mnist_data/images_train/
+python path/to/affinity-vae/run.py --config_file /absolute/path/to/mnist_data/mnist_config.yml --restart --epochs 2000 --datapath /absolute/path/to/mnist_data/images_train/
 ```
 
 here epochs are set to 2000 to continue training for 1000 extra epochs (assuming
@@ -117,7 +117,7 @@ new_out
 ├── configs # copy of the config file used for the run for reproducibility
 ├── logs # run logs
 ├── plots # plots and data of the training and evaluation metrics
-├── latents # html files latent space of the training and test sets, these files can be very large, so we recomend them to only runnin the at evaluation time (using the --dynamic flag)
+├── latents # html files latent space of the training and test sets, these files can be very large, so we recommend enabling them only at evaluation time (using the --vis_dynamic flag)
 ├── states #saving checkpoints of the models and the training latent space to be use for evaluation or restart training
 
 

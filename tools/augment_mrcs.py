@@ -5,13 +5,12 @@ rotation and translation.
 
 import argparse
 import os
-from pathlib import Path
+import pathlib
 
 import mrcfile
 import numpy as np
-from scipy import ndimage
-from scipy.ndimage import zoom
-from tqdm import tqdm
+import scipy.ndimage
+import tqdm
 
 
 def rescale(path_core, path_rescaled):
@@ -25,9 +24,11 @@ def rescale(path_core, path_rescaled):
         print("Rescaling", x.stem)
 
         try:
-            with mrcfile.open(Path(x)) as mrc:
+            with mrcfile.open(pathlib.Path(x)) as mrc:
                 nx, ny, nz = mrc.header.nx, mrc.header.ny, mrc.header.nz
-                new_x = zoom(mrc.data, (64 / nz, 64 / ny, 64 / nx))
+                new_x = scipy.ndimage.zoom(
+                    mrc.data, (64 / nz, 64 / ny, 64 / nx)
+                )
                 new_x = (new_x - np.min(new_x)) / np.ptp(new_x)
 
                 x_range, y_range, z_range = [
@@ -77,7 +78,7 @@ def rotate_the_pokemino_1_axis(
         assert (isinstance(theta, int)) and theta in range(
             0, 360
         ), "Error: Pokemino3D.rotate_the_brick requires the value for theta in range <0, 360>."
-    array = ndimage.rotate(
+    array = scipy.ndimage.rotate(
         array, angle=theta, axes=axes, order=order, reshape=False
     )
 
@@ -153,11 +154,11 @@ def read_rotate_translate_save_mrc(
     if not os.path.exists(output_path):
         os.mkdir(output_path)
 
-    for i in tqdm(range(n_pokeminos)):
+    for i in tqdm.tqdm(range(n_pokeminos)):
 
         protein = np.random.choice(mrcs)
         meta = []
-        new_mrc = mrcfile.open(Path(src_path, f"{protein}.mrc")).data
+        new_mrc = mrcfile.open(pathlib.Path(src_path, f"{protein}.mrc")).data
 
         if nrot == 1:
             new_mrc, theta_x = rotate_the_pokemino_1_axis(new_mrc)
@@ -226,7 +227,7 @@ def read_rotate_translate_save_mrc(
 parser = argparse.ArgumentParser()
 parser.add_argument("--data")
 args = parser.parse_args()
-src_path = Path(args.data)
+src_path = pathlib.Path(args.data)
 
 # rescale
 # output_path = Path(os.path.join(src_path.parent, src_path.stem+"_rescaled/"))
@@ -242,7 +243,7 @@ n_pokeminos = 10000
 # read_rotate_translate_save_mrc(src_path = src_path, output_path = output_path, mrcs_list = mrcs, n_pokeminos = n_pokeminos, nrot = 1, ntrans = 0)
 
 # 3rot
-output_path = Path(
+output_path = pathlib.Path(
     os.path.join(src_path.parent, src_path.stem + "_3rot_10000/")
 )
 read_rotate_translate_save_mrc(

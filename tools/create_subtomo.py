@@ -4,7 +4,7 @@ import warnings
 import mrcfile
 import numpy as np
 import pandas as pd
-from scipy.ndimage import rotate
+import scipy.ndimage
 
 
 def create_subtomo(
@@ -152,7 +152,9 @@ def augmentation(mol, a, aug_th_min, aug_th_max):
     for ax in range(angle.size):
         theta = angle[ax] * deg_per_rot * a
         axes = (ax, (ax + 1) % angle.size)
-        mol = rotate(mol, theta, axes=axes, order=0, reshape=False)
+        mol = scipy.ndimage.rotate(
+            mol, theta, axes=axes, order=0, reshape=False
+        )
     return mol
 
 

@@ -1,32 +1,29 @@
 import logging
 import os
-from pathlib import Path
-from typing import Literal, overload
+import pathlib
+import typing
 
+import caked.dataloader
 import lightning as lt
 import numpy as np
 import pandas as pd
-from caked.dataloader import DiskDataLoader, DiskDataset
-from torch.utils.data import DataLoader
+import torch.utils.data
 
-from . import settings
 from .vis import format, plot_affinity_matrix, plot_classes_distribution
-
-lt.pytorch.seed_everything(42)
 
 
 # As the function load_data can return different types of data depending on the value of the eval parameter, it uses
 # function overloading to define multiple signatures for the function. This allows the function to have different return
 # types and behaviors based on the input parameters.
-@overload
+@typing.overload
 def load_data(
     datapath: str,
     datatype: str,
-    eval: Literal[True],
+    eval: typing.Literal[True],
     fabric: lt.fabric.fabric,
     lim: int | None = None,
     splt: int = 20,
-    batch_s: int = 64,
+    batch: int = 64,
     no_val_drop: bool = False,
     affinity_path: str | None = None,
     classes: str | None = None,
@@ -34,19 +31,22 @@ def load_data(
     normalise: bool = False,
     shift_min: bool = False,
     rescale: int | None = None,
-) -> tuple[DataLoader, int]:
+    vis_his: bool = False,
+    vis_aff: bool = False,
+    vis_format: str = "png",
+) -> tuple[torch.utils.data.DataLoader, int]:
     ...
 
 
-@overload
+@typing.overload
 def load_data(
     datapath: str,
     datatype: str,
-    eval: Literal[False],
+    eval: typing.Literal[False],
     fabric: lt.fabric.fabric,
     lim: int | None = None,
     splt: int = 20,
-    batch_s: int = 64,
+    batch: int = 64,
     no_val_drop: bool = False,
     affinity_path: str | None = None,
     classes: str | None = None,
@@ -54,7 +54,16 @@ def load_data(
     normalise: bool = False,
     shift_min: bool = False,
     rescale: int | None = None,
-) -> tuple[DataLoader, DataLoader, DataLoader, pd.DataFrame, int]:
+    vis_his: bool = False,
+    vis_aff: bool = False,
+    vis_format: str = "png",
+) -> tuple[
+    torch.utils.data.DataLoader,
+    torch.utils.data.DataLoader,
+    torch.utils.data.DataLoader,
+    pd.DataFrame,
+    int,
+]:
     ...
 
 
@@ -65,7 +74,7 @@ def load_data(
     fabric: lt.fabric.fabric,
     lim: int | None = None,
     splt: int = 20,
-    batch_s: int = 64,
+    batch: int = 64,
     no_val_drop: bool = False,
     affinity_path: str | None = None,
     classes: str | None = None,
@@ -73,9 +82,16 @@ def load_data(
     normalise: bool = False,
     shift_min: bool = False,
     rescale: int | None = None,
-) -> tuple[DataLoader, DataLoader, DataLoader, pd.DataFrame, int] | tuple[
-    DataLoader, int
-]:
+    vis_his: bool = False,
+    vis_aff: bool = False,
+    vis_format: str = "png",
+) -> tuple[
+    torch.utils.data.DataLoader,
+    torch.utils.data.DataLoader,
+    torch.utils.data.DataLoader,
+    pd.DataFrame,
+    int,
+] | tuple[torch.utils.data.DataLoader, int]:
     """This function a wrapper around the DiskDataLoader class from the caked library. It loads data from a given path, selects a subset of classes if requested, splits it into train / val and test in batch sets, and loads an affinity matrix.
     The function is overloaded to return different types of data depending on the value of the eval parameter. If eval is True, the function returns only the test data and the dimension of the data. If eval is False, the function returns train, validation, and test data, the affinity matrix, and the dimension of the data.
 
@@ -89,7 +105,7 @@ def load_data(
         Limit the number of samples to load.
     splt: int
         Percentage of data to be used for validation.
-    batch_s: int
+    batch: int
         Batch size.
     no_val_drop: bool
         If True, the last batch of validation data will not be dropped if it is smaller than batch size.
@@ -122,6 +138,10 @@ def load_data(
         Affinity matrix, returned only if eval is False.
     """
 
+    logging.info("\n")
+    logging.info("############################################### DATA")
+    logging.info(f"Loading data...")
+
     # read the class list, if not provided all classes in the dataset will be used as default
     if classes is not None:
         classes_list = pd.read_csv(classes).columns.tolist()
@@ -145,7 +165,7 @@ def load_data(
         # the caked library is used to load data from the given path, split it into train and validation, apply transformations, and get torch dataloaders
         # the caked implementation used to be a part of the avae library, but it was moved to the caked library to make it more modular and reusable
         # you can find the caked library here: https://github.com/alan-turing-institute/caked/
-        loader = DiskDataLoader(
+        loader = caked.dataloader.DiskDataLoader(
             pipeline="disk",
             classes=classes_list,
             dataset_size=lim,
@@ -163,7 +183,12 @@ def load_data(
 
         # for training, we need to load the affinity matrix
         if affinity_path is not None:
-            affinity = get_affinity_matrix(affinity_path, classes_list)
+            affinity = get_affinity_matrix(
+                affinity_path,
+                classes_list,
+                vis_aff=vis_aff and fabric.global_rank == 0,
+                vis_format=vis_format,
+            )
 
         # assign the affinity matrix to the dataset (small modification from the caked DiskDataset, which only returns data and labels, and we need the affinity matrix indexes for training).
         loader.dataset = AffinityDiskDataset(
@@ -172,28 +197,26 @@ def load_data(
 
         # using caked, we split the data into train and validation and get torch dataloaders
         trains, vals = loader.get_loader(
-            batch_size=batch_s, split_size=splt, no_val_drop=no_val_drop
+            batch_size=batch, split_size=splt, no_val_drop=no_val_drop
         )
 
+        # Plot the complete splits once, before Fabric shards the loaders.
+        if vis_his and fabric.global_rank == 0:
+            train_y = list(sum([y[1] for _, y in enumerate(trains)], ()))
+            val_y = list(sum([y[1] for _, y in enumerate(vals)], ()))
+            plot_classes_distribution(train_y, "train", vis_format=vis_format)
+            plot_classes_distribution(
+                val_y, "validation", vis_format=vis_format
+            )
+
+        train_size = len(trains.dataset)
+        val_size = len(vals.dataset)
         trains = fabric.setup_dataloaders(trains)
         vals = fabric.setup_dataloaders(vals)
-        
-        # ################# Visualising class distribution ###################
 
-        # getting labels from dataloaders
-        train_y = list(sum([y[1] for _, y in enumerate(trains)], ()))
-        val_y = list(sum([y[1] for _, y in enumerate(vals)], ()))
-
-        if settings.VIS_HIS:
-            plot_classes_distribution(train_y, "train")
-            plot_classes_distribution(val_y, "validation")
-
-        logging.info("############################################### DATA")
         logging.info("Data size: {}".format(len(loader.dataset)))
         logging.info("Class list: {}".format(classes_list))
-        logging.info(
-            "Train / val split: {}, {}".format(len(train_y), len(val_y))
-        )
+        logging.info("Train / val split: {}, {}".format(train_size, val_size))
         logging.info(
             "Train / val batches: {}, {}\n".format(len(trains), len(vals))
         )
@@ -204,7 +227,7 @@ def load_data(
             datapath = os.path.join(datapath, "test")
 
         # configure the caked library dataloader with the given parameters for test or evaluation
-        test_loader = DiskDataLoader(
+        test_loader = caked.dataloader.DiskDataLoader(
             pipeline="disk",
             classes=[],
             dataset_size=lim,
@@ -225,10 +248,16 @@ def load_data(
         )
 
         # get torch dataloader
-        tests = test_loader.get_loader(batch_size=batch_s)
+        tests = test_loader.get_loader(batch_size=batch)
+
+        if vis_his and fabric.global_rank == 0:
+            eval_y = list(sum([y[1] for _, y in enumerate(tests)], ()))
+            plot_classes_distribution(
+                eval_y, "evaluation", vis_format=vis_format
+            )
+
         tests = fabric.setup_dataloaders(tests)
 
-        logging.info("############################################### EVAL")
         logging.info("Eval data size: {}".format(len(test_loader.dataset)))
         logging.info("Eval batches: {}\n".format(len(tests)))
 
@@ -245,7 +274,10 @@ def load_data(
 
 
 def get_affinity_matrix(
-    affinity_path: str, classes: list = []
+    affinity_path: str,
+    classes: list = [],
+    vis_aff: bool = False,
+    vis_format: str = "png",
 ) -> pd.DataFrame:
     """Loads affinity matrix from a given path, subsets it given selected classes and returns it as a pandas DataFrame.
 
@@ -276,11 +308,12 @@ def get_affinity_matrix(
                     np.asarray(classes)[~class_check]
                 )
             )
-        if settings.VIS_AFF:
+        if vis_aff:
             plot_affinity_matrix(
                 lookup=affinity,
                 all_classes=affinity.columns.tolist(),
                 selected_classes=classes,
+                vis_format=vis_format,
             )
 
         # subset affinity matrix with only the relevant classes
@@ -293,14 +326,14 @@ def get_affinity_matrix(
         return None
 
 
-class AffinityDiskDataset(DiskDataset):
+class AffinityDiskDataset(caked.dataloader.DiskDataset):
 
     """Modified version of the caked DiskDataset to include the affinity matrix and data metadata that is needed for the
     affinity pipeline"""
 
     def __init__(
         self,
-        dataset: DiskDataset,
+        dataset: caked.dataloader.DiskDataset,
         classes: list,
         affinity: pd.DataFrame | None = None,
     ):
@@ -322,9 +355,9 @@ class AffinityDiskDataset(DiskDataset):
         x = self.transformation(data)
 
         # get file basename
-        filename = Path(self.paths[index]).name
+        filename = pathlib.Path(self.paths[index]).name
         # ground truth
-        y = Path(filename).name.split("_")[0]
+        y = pathlib.Path(filename).name.split("_")[0]
 
         # similarity column / vector
         if self.affinity is not None:
@@ -335,7 +368,15 @@ class AffinityDiskDataset(DiskDataset):
 
         # file info and metadata
         meta = "_".join(filename.split(".")[0].split("_")[1:])
-        img = format(x, len(data.shape))  # used for dynamic preview in Altair
+        formatted_img = format(
+            x, len(data.shape)
+        )  # used for dynamic preview in Altair
+        if isinstance(formatted_img, list):
+            img = formatted_img[0] if formatted_img else ""
+        elif isinstance(formatted_img, str):
+            img = formatted_img
+        else:
+            img = ""
         meta = {
             "filename": filename,
             "meta": meta,

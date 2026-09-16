@@ -7,8 +7,8 @@ import _pickle as cPickle
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from PIL import Image
-from scipy.ndimage import rotate
+import PIL.Image
+import scipy.ndimage
 
 
 def load_mnist(path):
@@ -29,7 +29,9 @@ def augmentation(mol, a, aug_th_min, aug_th_max):
     for ax in range(angle.size):
         theta = angle[ax] * deg_per_rot * a
         axes = (ax, (ax + 1) % angle.size)
-        mol = rotate(mol, theta, axes=axes, order=0, reshape=False)
+        mol = scipy.ndimage.rotate(
+            mol, theta, axes=axes, order=0, reshape=False
+        )
     return mol
 
 
@@ -112,7 +114,7 @@ class SaverMNIST:
             for index, (image, label) in enumerate(
                 zip(collection[0], collection[1])
             ):
-                im = Image.fromarray(image)
+                im = PIL.Image.fromarray(image)
                 width, height = im.size
                 image_name = str(label) + '_' + str(index) + self._image_format
                 image = np.array(image)
@@ -125,7 +127,7 @@ class SaverMNIST:
                 for ax in range(angle.size):
                     theta = angle[ax]
                     axes = (ax, (ax + 1) % angle.size)
-                    image = rotate(
+                    image = scipy.ndimage.rotate(
                         image, theta, axes=axes, order=0, reshape=False
                     )
 

@@ -4,29 +4,6 @@ import lightning as lt
 import torch
 
 
-def set_device(gpu: bool) -> torch.device:
-    """Set the torch device to use for training and inference.
-
-    Parameters
-    ----------
-    gpu: bool
-        If True, the model will be trained on GPU.
-
-    Returns
-    -------
-    device: torch.device
-
-    """
-    device = torch.device(
-        "cuda:0" if gpu and torch.cuda.is_available() else "cpu"
-    )
-    if gpu and device == "cpu":
-        logging.warning(
-            "\n\nWARNING: no GPU available, running on CPU instead.\n"
-        )
-    return device
-
-
 def parse_requested_cuda_devices(
     gpu_devices: str | None, n_visible: int
 ) -> list[int]:
@@ -82,19 +59,19 @@ def probe_usable_cuda_devices(candidate_devices: list[int]) -> list[int]:
 
 
 def setup_gpus(
-    use_gpu: bool,
+    gpu: bool,
     gpu_devices: str | None,
     strategy: str,
 ) -> lt.Fabric:
-    """Build a Lightning Fabric object with CPU/GPU settings.
+    """Build a Lightning Fabric object with CPU/GPU settings."""
+    logging.info("\n")
+    logging.info("############################################### GPU")
+    logging.info(f"Setting up GPUs...")
 
-    This preserves the existing behavior for manual/auto GPU selection,
-    probing usable CUDA devices, and strategy fallback on single device.
-    """
     n_devices = torch.cuda.device_count()
     logging.info('GPus available: {}'.format(n_devices))
 
-    if n_devices > 0 and use_gpu is True:
+    if n_devices > 0 and gpu:
         accelerator = 'gpu'
         manual_device_selection = (
             gpu_devices is not None and gpu_devices.strip() != ""
@@ -158,7 +135,7 @@ def setup_gpus(
             num_nodes=n_nodes,
         )
 
-    if use_gpu and n_devices == 0:
+    if gpu and n_devices == 0:
         logging.warning(
             "GPU requested but no CUDA devices are visible. Falling back to CPU.",
         )
