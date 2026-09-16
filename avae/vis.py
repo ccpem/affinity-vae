@@ -1037,19 +1037,19 @@ def loss_plot(
         "VAL KL divergence loss x BETA",
         "VAL Affinity loss x GAMMA",
     ]
-    title_font_size = 12
-    label_font_size = 10
-    tick_font_size = 9
+    title_font_size = 16
+    label_font_size = 16
+    tick_font_size = 14
 
-    plt.clf()
-    plt.ticklabel_format(useOffset=False)
+    fig, ax = plt.subplots(figsize=(10, 7))
+    ax.ticklabel_format(useOffset=False)
 
     train_loss[-2] = train_loss[-2] * beta
     train_loss[-1] = train_loss[-1] * gamma
 
     for i, loss in enumerate(train_loss):
         s = "-"
-        plt.plot(
+        ax.plot(
             range(1, epochs + 1), loss, c=cols[i], linestyle=s, label=labs[i]
         )
     if val_loss is not None:
@@ -1057,7 +1057,7 @@ def loss_plot(
         val_loss[-1] = val_loss[-1] * gamma
         for i, loss in enumerate(val_loss):
             s = "--"
-            plt.plot(
+            ax.plot(
                 range(1, epochs + 1),
                 loss,
                 c=cols[i],
@@ -1074,30 +1074,30 @@ def loss_plot(
                 "Exiting.\n",
             )
             return
-        plt.title(
+        ax.set_title(
             "bs: %d, d: %d, ch: %d, lat: %d, lr: %.3f, beta: %.1f, "
             "gamma: %.1f" % (p[0], p[1], p[2], p[3], p[4], p[5], p[6]),
             fontsize=title_font_size,
             fontweight="normal",
         )
     else:
-        plt.title("Loss", fontsize=title_font_size, fontweight="normal")
+        ax.set_title("Loss", fontsize=title_font_size, fontweight="normal")
 
-    plt.yscale("log")
-    plt.ylabel("Loss", fontsize=label_font_size)
-    plt.xlabel("Epochs", fontsize=label_font_size)
-    plt.xticks(fontsize=tick_font_size)
-    plt.yticks(fontsize=tick_font_size)
-    plt.legend(fontsize=tick_font_size)
+    ax.set_yscale("log")
+    ax.set_ylabel("Loss", fontsize=label_font_size)
+    ax.set_xlabel("Epochs", fontsize=label_font_size)
+    ax.tick_params(axis="both", labelsize=tick_font_size)
+    ax.legend(fontsize=tick_font_size)
 
-    plt.tight_layout()
+    fig.tight_layout()
     if not os.path.exists("plots"):
         os.mkdir("plots")
-    plt.savefig(f"plots/loss.{vis_format}", dpi=300)
-    plt.close()
+    fig.savefig(f"plots/loss.{vis_format}", dpi=300)
+    plt.close(fig)
 
     # plotting only the total loss as it sometimes is a few order of magnitude higher than KLD and affinity losses
-    plt.plot(
+    fig, ax = plt.subplots(figsize=(10, 7))
+    ax.plot(
         range(1, epochs + 1),
         train_loss[0],
         c=cols[0],
@@ -1105,22 +1105,21 @@ def loss_plot(
         label=labs[0],
     )
     if val_loss is not None:
-        plt.plot(
+        ax.plot(
             range(1, epochs + 1),
             val_loss[0],
             c=cols[0],
             linestyle="--",
             label=vlabs[0],
         )
-    plt.yscale("log")
-    plt.ylabel("Loss", fontsize=label_font_size)
-    plt.xlabel("Epochs", fontsize=label_font_size)
-    plt.xticks(fontsize=tick_font_size)
-    plt.yticks(fontsize=tick_font_size)
-    plt.legend(fontsize=tick_font_size)
-    plt.tight_layout()
-    plt.savefig(f"plots/loss_total.{vis_format}", dpi=300)
-    plt.close()
+    ax.set_yscale("log")
+    ax.set_ylabel("Loss", fontsize=label_font_size)
+    ax.set_xlabel("Epochs", fontsize=label_font_size)
+    ax.tick_params(axis="both", labelsize=tick_font_size)
+    ax.legend(fontsize=tick_font_size)
+    fig.tight_layout()
+    fig.savefig(f"plots/loss_total.{vis_format}", dpi=300)
+    plt.close(fig)
 
 
 def recon_plot(
@@ -1941,16 +1940,16 @@ def plot_cyc_variable(
         "################################################################",
     )
     logging.info(f"Visualising {variable_name} ...\n")
-    plt.plot(array, linewidth=3)
-    plt.ylabel(rf"$\{variable_name}$", fontsize=16)
-    plt.xlabel("Epochs", fontsize=16)
-    plt.xticks(fontsize=16)
-    plt.yticks(fontsize=16)
-    plt.tight_layout()
+    fig, ax = plt.subplots(figsize=(10, 7))
+    ax.plot(array, linewidth=3)
+    ax.set_ylabel(rf"$\{variable_name}$", fontsize=16)
+    ax.set_xlabel("Epochs", fontsize=16)
+    ax.tick_params(axis="both", labelsize=14)
+    fig.tight_layout()
     if not os.path.exists("plots"):
         os.mkdir("plots")
-    plt.savefig(f"plots/hyperaparam_{variable_name}.{vis_format}", dpi=300)
-    plt.close()
+    fig.savefig(f"plots/hyperaparam_{variable_name}.{vis_format}", dpi=300)
+    plt.close(fig)
 
 
 def latent_space_similarity_plot(
