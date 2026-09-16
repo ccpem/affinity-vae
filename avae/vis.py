@@ -92,14 +92,18 @@ def format(im: PIL.Image, data_dim: int) -> list[str]:
     """
     if len(im.shape) == 5 and data_dim == 3:
         batch = True
-        im = np.sum(
-            np.copy(im.squeeze(dim=1).cpu().detach().numpy()), axis=-1
-        )  # .astype(np.uint8)
+        im = np.copy(
+            im[:, :, im.shape[2] // 2, :, :]
+            .squeeze(dim=1)
+            .cpu()
+            .detach()
+            .numpy()
+        )
     elif len(im.shape) == 4 and data_dim == 3:
         batch = False
-        im = np.sum(
-            np.copy(im.squeeze(dim=0).cpu().detach().numpy()), axis=-1
-        )  # .astype(np.uint8)
+        im = np.copy(
+            im[:, im.shape[1] // 2, :, :].squeeze(dim=0).cpu().detach().numpy()
+        )
     elif len(im.shape) == 4 and data_dim == 2:
         batch = True
         im = np.copy(im.squeeze(dim=1).cpu().detach().numpy())
@@ -1050,8 +1054,8 @@ def recon_plot(
     fname_out = f"recon_{mode}_out.{vis_format}"
 
     if data_dim == 3:
-        img_2d = img[:, :, :, :, img.shape[-1] // 2]
-        rec_2d = rec[:, :, :, :, img.shape[-1] // 2]
+        img_2d = img[:, :, img.shape[2] // 2, :, :]
+        rec_2d = rec[:, :, rec.shape[2] // 2, :, :]
     elif data_dim == 2:
         img_2d = img
         rec_2d = rec
