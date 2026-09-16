@@ -328,6 +328,8 @@ def load_config_params(
         # if no config file is provided, start from default and update with command line arguments
         params = {}
 
+    command_line_params = set()
+
     # check for command line input values and overwrite config file values
     # we're using sys args because click has populated defaults from confing
     if sys_args is not None:
@@ -337,6 +339,7 @@ def load_config_params(
                 continue
             name = arg[2:].split("=")[0]
             if name in local_args.keys():
+                command_line_params.add(name)
                 # overwrite config file value with command line argument value
                 # but only if its on system args (click has defaults)
                 if name in params.keys():
@@ -372,7 +375,11 @@ def load_config_params(
         if type(val) == pathlib.Path:
             # turn relative paths to absolute
             params[key] = str(val.absolute())
-        if 'vis' in key and params['vis_all'] is not None:
+        if (
+            'vis' in key
+            and params['vis_all'] is not None
+            and key not in command_line_params
+        ):
             # set visualisation to vis_all if it is not set, except for vis_z_n_int and vis_pose_class
             if key in [
                 'vis_all',
@@ -385,7 +392,11 @@ def load_config_params(
             logging.warning(
                 f"Visualisation parameter 'vis_all' is overriding {key} to {params['vis_all']}"
             )
-        if 'freq' in key and params['freq_all'] is not None:
+        if (
+            'freq' in key
+            and params['freq_all'] is not None
+            and key not in command_line_params
+        ):
             # set frequency to freq_all if it is not set
             if key in ['freq_all']:
                 continue

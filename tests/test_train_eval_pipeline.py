@@ -23,7 +23,6 @@ def pipeline_params(datapath):
         "no_val_drop": True,
         "affinity": os.path.join(datapath, "affinity_fsc_10.csv"),
         "classes": os.path.join(datapath, "classes.csv"),
-        "vis_dynamic": True,
         "epochs": 1,
         "channels": 3,
         "depth": 4,

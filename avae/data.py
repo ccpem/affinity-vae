@@ -140,7 +140,7 @@ def load_data(
 
     logging.info("\n")
     logging.info("############################################### DATA")
-    logging.info(f"Loading data...")
+    logging.info("Loading data...\n")
 
     # read the class list, if not provided all classes in the dataset will be used as default
     if classes is not None:
