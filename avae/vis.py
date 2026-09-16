@@ -7,6 +7,7 @@ import typing
 import warnings
 
 import altair
+import matplotlib
 import matplotlib.gridspec as gridspec
 import matplotlib.pyplot as plt
 import numpy as np
@@ -1799,7 +1800,9 @@ def plot_affinity_matrix(
     ax = plt.subplot(gs[0])
     ax.set_title("Affinity Matrix", fontsize=16)
 
-    im = ax.imshow(lookup, vmin=-1, vmax=1, cmap=plt.get_cmap("RdBu"))
+    im = ax.imshow(
+        lookup, vmin=-1, vmax=1, cmap=matplotlib.colormaps.get_cmap("RdBu")
+    )
 
     ax.set_xticks(np.arange(0, len(all_classes)))
     ax.set_xticklabels(all_classes)
