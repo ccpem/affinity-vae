@@ -433,44 +433,64 @@ def train(params):
 
         # visualise accuracy: confusion and F1 scores
         if (
-            rank_zero
-            and params.vis_acc
+            params.vis_acc
             and params.freq_acc != 0
             and (epoch + 1) % params.freq_acc == 0
         ):
-            (
-                train_acc,
-                val_acc,
-                _,
-                ypred_train,
-                ypred_val,
-            ) = utils_learning.accuracy(
-                z_train, y_train, z_val, y_val, classifier=params.classifier
+            combined_accuracy_data = utils_learning.combine_accuracy_data(
+                z_train,
+                y_train,
+                z_val,
+                y_val,
+                rank_zero=rank_zero,
+                world_size=fabric.world_size,
             )
 
-            logging.info(
-                "------------------->>> Accuracy: Train: %f | Val: %f\n"
-                % (train_acc, val_acc),
-            )
-            vis.accuracy_plot(
-                y_train,
-                ypred_train,
-                y_val,
-                ypred_val,
-                epoch=epoch,
-                writer=writer,
-                vis_format=params.vis_format,
-            )
+            if rank_zero:
+                assert combined_accuracy_data is not None
+                (
+                    z_train_all,
+                    y_train_all,
+                    z_val_all,
+                    y_val_all,
+                ) = combined_accuracy_data
+                (
+                    train_acc,
+                    val_acc,
+                    _,
+                    ypred_train,
+                    ypred_val,
+                ) = utils_learning.accuracy(
+                    z_train_all,
+                    y_train_all,
+                    z_val_all,
+                    y_val_all,
+                    classifier=params.classifier,
+                )
 
-            vis.f1_plot(
-                y_train,
-                ypred_train,
-                y_val,
-                ypred_val,
-                epoch=epoch,
-                writer=writer,
-                vis_format=params.vis_format,
-            )
+                logging.info(
+                    "------------------->>> Accuracy: Train: %f | Val: %f\n"
+                    % (train_acc, val_acc),
+                )
+                vis.accuracy_plot(
+                    y_train_all,
+                    ypred_train,
+                    y_val_all,
+                    ypred_val,
+                    epoch=epoch,
+                    writer=writer,
+                    vis_format=params.vis_format,
+                )
+
+                vis.f1_plot(
+                    y_train_all,
+                    ypred_train,
+                    y_val_all,
+                    ypred_val,
+                    epoch=epoch,
+                    writer=writer,
+                    vis_format=params.vis_format,
+                )
 
         # visualise loss
         if rank_zero and params.vis_los and epoch > 0:

@@ -31,11 +31,24 @@ def accuracy(
     label_encoder.fit(labels)
 
     training_classes = np.unique(y_train)
-    if np.setdiff1d(training_classes, np.unique(y_val)).size > 0:
-        logging.info(
-            "Class %s was unseen in training data. Computing accuracy for "
-            "sets of seen and unseen data",
-            np.setdiff1d(training_classes, np.unique(y_val)),
+    validation_classes = np.unique(y_val)
+    missing_from_validation = np.setdiff1d(
+        training_classes, validation_classes
+    )
+    if missing_from_validation.size > 0:
+        logging.warning(
+            "Training classes %s are absent from validation data. They will "
+            "be excluded from validation per-class metrics.",
+            missing_from_validation,
+        )
+
+    unseen_in_training = np.setdiff1d(validation_classes, training_classes)
+    if unseen_in_training.size > 0:
+        logging.warning(
+            "Validation classes %s were unseen during training. Overall "
+            "validation accuracy includes them; seen-class accuracy excludes "
+            "them.",
+            unseen_in_training,
         )
 
     selected_indices = np.argwhere(np.isin(y_val, training_classes)).ravel()
@@ -92,9 +105,17 @@ def accuracy(
     val_accuracy = sklearn.metrics.accuracy_score(
         y_val_encoded, y_pred_val_encoded
     )
-    selected_val_accuracy = sklearn.metrics.accuracy_score(
-        y_val_encoded[selected_indices], y_pred_val_encoded[selected_indices]
-    )
+    if selected_indices.size > 0:
+        selected_val_accuracy = sklearn.metrics.accuracy_score(
+            y_val_encoded[selected_indices],
+            y_pred_val_encoded[selected_indices],
+        )
+    else:
+        logging.warning(
+            "No validation samples belong to classes seen during training; "
+            "seen-class validation accuracy is unavailable."
+        )
+        selected_val_accuracy = float("nan")
 
     return (
         train_accuracy,
@@ -285,6 +306,42 @@ def combine_meta_df(
         return pd.concat(non_empty_meta, ignore_index=False)
 
     return pd.DataFrame()
+
+
+def combine_accuracy_data(
+    z_train: list,
+    y_train: list,
+    z_val: list,
+    y_val: list,
+    rank_zero: bool,
+    world_size: int,
+) -> tuple[npt.NDArray, npt.NDArray, npt.NDArray, npt.NDArray] | None:
+    """Combine per-rank latent vectors and labels on rank zero."""
+    local_data = (z_train, y_train, z_val, y_val)
+    if not (dist.is_available() and dist.is_initialized() and world_size > 1):
+        return tuple(np.asarray(values) for values in local_data)
+
+    gathered_data: list[tuple[list, list, list, list] | None] | None = (
+        [None] * world_size if rank_zero else None
+    )
+    dist.gather_object(local_data, gathered_data, dst=0)
+
+    if not rank_zero or gathered_data is None:
+        return None
+
+    complete_data: list[tuple[list, list, list, list]] = []
+    for rank_data in gathered_data:
+        if rank_data is None:
+            raise RuntimeError(
+                "Accuracy data was not gathered from every rank."
+            )
+        complete_data.append(rank_data)
+    return tuple(
+        np.concatenate(
+            [np.asarray(rank_data[index]) for rank_data in complete_data]
+        )
+        for index in range(len(local_data))
+    )
 
 
 def log_progress(message: str) -> None:

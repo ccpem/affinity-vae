@@ -219,3 +219,30 @@ class VisPipelineTest(unittest.TestCase):
 
         # Loss rendering writes both component and total-loss views.
         self.assertEqual(plot_files, {"loss.png", "loss_total.png"})
+
+    def test_accuracy_plot_handles_class_absent_from_validation(self):
+        original_cwd = os.getcwd()
+
+        with tempfile.TemporaryDirectory(prefix="avae-accuracy-") as temp_dir:
+            os.chdir(temp_dir)
+            try:
+                with self.assertLogs(level="WARNING") as captured_logs:
+                    with np.errstate(divide="raise", invalid="raise"):
+                        vis.accuracy_plot(
+                            np.array(["a", "a", "b", "b"]),
+                            np.array(["a", "a", "b", "b"]),
+                            np.array(["a", "a"]),
+                            np.array(["a", "a"]),
+                        )
+                normalised = pd.read_csv(
+                    "plots/confusion_valid_norm.csv"
+                ).to_numpy()
+            finally:
+                os.chdir(original_cwd)
+
+        self.assertTrue(np.isfinite(normalised).all())
+        np.testing.assert_array_equal(normalised[1], np.zeros(2))
+        self.assertIn(
+            "no samples for classes ['b']",
+            " ".join(captured_logs.output),
+        )

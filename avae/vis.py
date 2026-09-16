@@ -595,10 +595,25 @@ def accuracy_plot(
         confusion_matrix=cm, display_labels=classes_list
     )
 
-    avg_accuracy = cm.diagonal() / cm.sum(axis=1)
+    train_support = cm.sum(axis=1)
+    supported_train_classes = train_support > 0
+    avg_accuracy = np.divide(
+        cm.diagonal(),
+        train_support,
+        out=np.zeros_like(train_support, dtype=float),
+        where=supported_train_classes,
+    )
 
     # Normalize confusion matrix
-    cmn = (cm.astype("float") / cm.sum(axis=1)[:, np.newaxis]) * 100
+    cmn = (
+        np.divide(
+            cm.astype(float),
+            train_support[:, np.newaxis],
+            out=np.zeros_like(cm, dtype=float),
+            where=supported_train_classes[:, np.newaxis],
+        )
+        * 100
+    )
 
     # Convert normalised confusion matrix to a DataFrame to be saved as csv file
     cmn_df = pd.DataFrame(cmn)
@@ -619,7 +634,7 @@ def accuracy_plot(
         plt.tight_layout()
         plt.title(
             "Average accuracy at epoch {}: {:.3f}%".format(
-                epoch, np.mean(avg_accuracy) * 100
+                epoch, np.mean(avg_accuracy[supported_train_classes]) * 100
             ),
             fontsize=10,
         )
@@ -655,7 +670,7 @@ def accuracy_plot(
         plt.tight_layout()
         plt.title(
             "Average accuracy at epoch {}: {:.3f}%".format(
-                epoch, np.mean(avg_accuracy) * 100
+                epoch, np.mean(avg_accuracy[supported_train_classes]) * 100
             ),
             fontsize=12,
         )
@@ -688,11 +703,31 @@ def accuracy_plot(
     disp_eval = sklearn.metrics.ConfusionMatrixDisplay(
         confusion_matrix=cm_eval, display_labels=ordered_class_eval
     )
-    avg_accuracy_eval = cm_eval.diagonal() / cm_eval.sum(axis=1)
+    eval_support = cm_eval.sum(axis=1)
+    supported_eval_classes = eval_support > 0
+    if not np.all(supported_eval_classes):
+        logging.warning(
+            "Validation confusion matrix has no samples for classes %s. "
+            "Their normalised rows will be set to zero and excluded from "
+            "average per-class accuracy.",
+            ordered_class_eval[~supported_eval_classes],
+        )
+    avg_accuracy_eval = np.divide(
+        cm_eval.diagonal(),
+        eval_support,
+        out=np.zeros_like(eval_support, dtype=float),
+        where=supported_eval_classes,
+    )
 
     # Normalise the validation confusion matrix
     cmn_eval = (
-        cm_eval.astype("float") / cm_eval.sum(axis=1)[:, np.newaxis] * 100
+        np.divide(
+            cm_eval.astype(float),
+            eval_support[:, np.newaxis],
+            out=np.zeros_like(cm_eval, dtype=float),
+            where=supported_eval_classes[:, np.newaxis],
+        )
+        * 100
     )
 
     # Convert confusion matrix to a DataFrame to be saved as csv file
@@ -731,7 +766,8 @@ def accuracy_plot(
         plt.tight_layout()
         plt.title(
             "Average accuracy at epoch {}: {:.1f}%".format(
-                epoch, np.mean(avg_accuracy_eval) * 100
+                epoch,
+                np.mean(avg_accuracy_eval[supported_eval_classes]) * 100,
             ),
             fontsize=12,
         )
@@ -753,7 +789,8 @@ def accuracy_plot(
         plt.tight_layout()
         plt.title(
             "Average accuracy at epoch {}: {:.1}% ".format(
-                epoch, np.mean(avg_accuracy_eval) * 100
+                epoch,
+                np.mean(avg_accuracy_eval[supported_eval_classes]) * 100,
             ),
             fontsize=10,
         )
