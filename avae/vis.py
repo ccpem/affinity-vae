@@ -346,7 +346,6 @@ def dyn_latentembed_plot(
     )
     logging.info("Visualising dynamic embedding...\n")
 
-    epoch += 1
     latentspace = df[[col for col in df if col.startswith("lat")]].to_numpy()
     lat_emb = np.asarray(
         utils_learning.tsne_embedding(latentspace)
@@ -496,7 +495,7 @@ def dyn_latentembed_plot(
     if not os.path.exists("latents"):
         os.mkdir("latents")
     # save latentspace and ids
-    chart.save(f"latents/latent_epoch_{epoch}_{mode}.html")
+    chart.save(f"latents/latent_epoch_{epoch + 1}_{mode}.html")
 
 
 def confidence_plot(x, y, s, suffix=None, vis_format="png"):
@@ -629,12 +628,18 @@ def accuracy_plot(
             figsize=(int(len(classes_list)) / 2, int(len(classes_list)) / 2)
         )
 
-        disp.plot(cmap=plt.cm.Blues, ax=ax, xticks_rotation=90)
+        disp.plot(
+            cmap=plt.cm.Blues,
+            ax=ax,
+            xticks_rotation=90,
+            values_format="d",
+        )
 
         plt.tight_layout()
         plt.title(
             "Average accuracy at epoch {}: {:.3f}%".format(
-                epoch, np.mean(avg_accuracy[supported_train_classes]) * 100
+                epoch + 1,
+                np.mean(avg_accuracy[supported_train_classes]) * 100,
             ),
             fontsize=10,
         )
@@ -670,7 +675,8 @@ def accuracy_plot(
         plt.tight_layout()
         plt.title(
             "Average accuracy at epoch {}: {:.3f}%".format(
-                epoch, np.mean(avg_accuracy[supported_train_classes]) * 100
+                epoch + 1,
+                np.mean(avg_accuracy[supported_train_classes]) * 100,
             ),
             fontsize=12,
         )
@@ -762,11 +768,16 @@ def accuracy_plot(
                 int(len(ordered_class_eval)) / 2,
             )
         )
-        disp_eval.plot(cmap=plt.cm.Blues, ax=ax, xticks_rotation=90)
+        disp_eval.plot(
+            cmap=plt.cm.Blues,
+            ax=ax,
+            xticks_rotation=90,
+            values_format="d",
+        )
         plt.tight_layout()
         plt.title(
             "Average accuracy at epoch {}: {:.1f}%".format(
-                epoch,
+                epoch + 1,
                 np.mean(avg_accuracy_eval[supported_eval_classes]) * 100,
             ),
             fontsize=12,
@@ -788,8 +799,8 @@ def accuracy_plot(
 
         plt.tight_layout()
         plt.title(
-            "Average accuracy at epoch {}: {:.1}% ".format(
-                epoch,
+            "Average accuracy at epoch {}: {:.1f}% ".format(
+                epoch + 1,
                 np.mean(avg_accuracy_eval[supported_eval_classes]) * 100,
             ),
             fontsize=10,
@@ -874,8 +885,8 @@ def f1_plot(
     train_df = pd.DataFrame([train_f1_score], columns=classes_list)
     valid_df = pd.DataFrame([valid_f1_score], columns=classes_list)
 
-    train_df["epoch"] = epoch
-    valid_df["epoch"] = epoch
+    train_df["epoch"] = epoch + 1
+    valid_df["epoch"] = epoch + 1
 
     train_df["f1_avg"] = np.mean(train_f1_score)
     valid_df["f1_avg"] = np.mean(valid_f1_score)
@@ -908,7 +919,7 @@ def f1_plot(
         plt.plot(classes_list, valid_f1_score, label=label, marker="o")
         plt.xticks(rotation=45)
         plt.legend(loc="lower left")
-        plt.title("F1 Score at epoch {}".format(epoch))
+        plt.title("F1 Score at epoch {}".format(epoch + 1))
         plt.ylabel("F1 Score")
         plt.savefig(f"plots/f1{mode}.{vis_format}", dpi=150)
 

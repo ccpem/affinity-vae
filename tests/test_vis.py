@@ -148,6 +148,9 @@ class VisPipelineTest(unittest.TestCase):
         self.assertEqual(plot_distribution.call_count, 3)
         # Accuracy is computed once and reused by both accuracy renderers.
         self.assertEqual(compute_accuracy.call_count, 1)
+        self.assertEqual(
+            patched_vis["accuracy_plot"].call_args.kwargs["epoch"], 0
+        )
         # Separate latent and pose spaces each require one t-SNE calculation.
         self.assertEqual(compute_tsne.call_count, 2)
         # Both static plots receive precomputed coordinates.
@@ -226,7 +229,12 @@ class VisPipelineTest(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="avae-accuracy-") as temp_dir:
             os.chdir(temp_dir)
             try:
-                with self.assertLogs(level="WARNING") as captured_logs:
+                with (
+                    self.assertLogs(level="WARNING") as captured_logs,
+                    mock.patch(
+                        "avae.vis.plt.title", wraps=vis.plt.title
+                    ) as plot_title,
+                ):
                     with np.errstate(divide="raise", invalid="raise"):
                         vis.accuracy_plot(
                             np.array(["a", "a", "b", "b"]),
@@ -245,4 +253,9 @@ class VisPipelineTest(unittest.TestCase):
         self.assertIn(
             "no samples for classes ['b']",
             " ".join(captured_logs.output),
+        )
+        titles = [call.args[0] for call in plot_title.call_args_list]
+        self.assertTrue(all("epoch 1:" in title for title in titles))
+        self.assertFalse(
+            any("e+" in title or "e-" in title for title in titles)
         )
