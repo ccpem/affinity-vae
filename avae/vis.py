@@ -7,7 +7,6 @@ import typing
 import warnings
 
 import altair
-import matplotlib.gridspec as gridspec
 import matplotlib.pyplot as plt
 import numpy as np
 import numpy.typing as npt
@@ -18,6 +17,7 @@ import sklearn.metrics
 import sklearn.metrics.pairwise
 import torch
 import torchvision
+from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 from . import utils_learning
 from .utils import (
@@ -29,6 +29,18 @@ from .utils import (
     save_imshow_png,
     save_mrc_file,
 )
+
+
+def _class_plot_scale(
+    num_classes: int, fig_size: int | None = None
+) -> tuple[float, int, int]:
+    """Return consistent figure and font sizes for class-based plots."""
+    font_size = max(8, int(num_classes / 3) + 3)
+    return (
+        fig_size if fig_size is not None else max(6, int(num_classes) / 2),
+        font_size,
+        max(font_size + 4, int(num_classes / 2) + 8),
+    )
 
 
 def _encoder(i: PIL.Image) -> str:
@@ -248,6 +260,7 @@ def latent_embed_plot_tsne(
             )
 
     n_classes = len(classes)
+    fig_size, font_size, title_font_size = _class_plot_scale(n_classes)
 
     if n_classes < 3:
         # If the number of classes are not moe than 3 the size of the figure would be too
@@ -259,6 +272,7 @@ def latent_embed_plot_tsne(
         fig, ax = plt.subplots(
             figsize=(int(n_classes / 2) + 4, int(n_classes / 2) + 2)
         )
+    marker_size = max(marker_size, int(marker_size * max(1, n_classes / 5)))
     # When the number of classes is less than 3 the image becomes two small
     colours = colour_per_class(classes)
 
@@ -276,12 +290,16 @@ def latent_embed_plot_tsne(
                 label=mol[:4],
                 facecolor=color,
                 edgecolor=color,
-                alpha=0.2,
+                alpha=0.5,
             )
 
-        ax.legend(bbox_to_anchor=(1.05, 1), loc="upper left", fontsize=16)
-        plt.xlabel("TSNE-1")
-        plt.ylabel("TSNE-2")
+        ax.legend(
+            bbox_to_anchor=(1.05, 1),
+            loc="upper left",
+            fontsize=font_size,
+        )
+        ax.set_xlabel("TSNE-1", fontsize=font_size)
+        ax.set_ylabel("TSNE-2", fontsize=font_size)
 
     if xs.shape[-1] == 1:
 
@@ -298,16 +316,21 @@ def latent_embed_plot_tsne(
                 label=mol[:4],
                 linewidth=l_w,
             )
-        plt.legend(
-            prop={"size": 10},
+        ax.legend(
             bbox_to_anchor=(1.05, 1),
             loc="upper left",
-            fontsize=16,
+            fontsize=font_size,
         )
-        plt.xlabel("dim 1")
-        plt.ylabel("freq")
+        ax.set_xlabel("dim 1", fontsize=font_size)
+        ax.set_ylabel("freq", fontsize=font_size)
 
-    plt.tight_layout()
+    ax.set_title(
+        f"t-SNE Embedding at epoch: {epoch + 1}",
+        fontsize=title_font_size,
+        fontweight="normal",
+    )
+    ax.tick_params(axis="both", labelsize=font_size)
+    fig.tight_layout()
 
     if not display:
         if not os.path.exists("plots"):
@@ -507,12 +530,14 @@ def confidence_plot(x, y, s, suffix=None, vis_format="png"):
     )
     cmap = plt.get_cmap("jet")
     cols = [cmap(i) for i in np.linspace(0, 1, len(x[0]))]
-    rows = len(np.unique(y)) // 2
-    if len(np.unique(y)) % 2 != 0:
+    classes = np.unique(y)
+    _, font_size, title_font_size = _class_plot_scale(len(classes))
+    rows = len(classes) // 2
+    if len(classes) % 2 != 0:
         rows += 1
-    fig, ax = plt.subplots(len(np.unique(y)), sharex=True, sharey=True)
+    fig, ax = plt.subplots(len(classes), sharex=True, sharey=True)
     ax = np.atleast_1d(ax)
-    for c, cl in enumerate(np.unique(y)):
+    for c, cl in enumerate(classes):
         mu_cl = np.take(x, np.where(np.array(y) == cl)[0], axis=0)
         var_cl = np.take(s, np.where(np.array(y) == cl)[0], axis=0)
         std_cl = np.exp(0.5 * var_cl)
@@ -533,7 +558,7 @@ def confidence_plot(x, y, s, suffix=None, vis_format="png"):
                 color=cols[i],
                 label="lat" + str(i + 1),
             )
-        ax[c].set_title(cl)
+        ax[c].set_title(cl, fontsize=title_font_size, fontweight="normal")
     name = f"plots/confidence.{vis_format}"
     if suffix is not None:
         name = name[:-4] + "_" + suffix + name[-4:]
@@ -584,9 +609,8 @@ def accuracy_plot(
 
     classes_list = np.unique(np.concatenate((y_train, ypred_train)))
 
-    # to avoid figure being too small with too little classses
-    fig_size = max(6, int(len(classes_list)) / 2)
-    font_size = max(8, int(len(classes_list) / 3) + 3)
+    fig_size, font_size, title_font_size = _class_plot_scale(len(classes_list))
+    value_font_size = min(font_size, 10)
 
     # Compute confusion matrix
     cm = sklearn.metrics.confusion_matrix(
@@ -635,21 +659,27 @@ def accuracy_plot(
             ax=ax,
             xticks_rotation=90,
             values_format="d",
+            colorbar=False,
         )
+        divider = make_axes_locatable(ax)
+        colorbar_ax = divider.append_axes("right", size="5%", pad=0.1)
+        fig.colorbar(disp.im_, cax=colorbar_ax)
+        colorbar_ax.tick_params(labelsize=font_size)
+        plt.setp(disp.text_.ravel(), fontsize=value_font_size)
 
-        plt.tight_layout()
-        plt.title(
+        ax.set_title(
             "Average accuracy at epoch {}: {:.3f}%".format(
                 epoch + 1,
-                np.mean(avg_accuracy[supported_train_classes]),
+                np.mean(avg_accuracy[supported_train_classes]) * 100,
             ),
-            fontsize=10,
+            fontsize=title_font_size,
+            fontweight="normal",
         )
 
         if not os.path.exists("plots"):
             os.mkdir("plots")
 
-        plt.tight_layout()
+        fig.tight_layout()
         plt.savefig(f"plots/confusion_train{mode}.{vis_format}", dpi=300)
 
         # Save confusion matrix DataFrame to CSV
@@ -671,19 +701,26 @@ def accuracy_plot(
             xticks_rotation=90,
             values_format=".0f",
             im_kw={"vmin": 0, "vmax": 100},
+            colorbar=False,
         )
+        divider = make_axes_locatable(ax)
+        colorbar_ax = divider.append_axes("right", size="5%", pad=0.1)
+        fig.colorbar(dispn.im_, cax=colorbar_ax)
+        colorbar_ax.tick_params(labelsize=font_size)
+        plt.setp(dispn.text_.ravel(), fontsize=value_font_size)
 
-        plt.tight_layout()
-        plt.title(
+        ax.set_title(
             "Average accuracy at epoch {}: {:.3f}%".format(
                 epoch + 1,
                 np.mean(avg_accuracy[supported_train_classes]) * 100,
             ),
-            fontsize=font_size + 2,
+            fontsize=title_font_size,
+            fontweight="normal",
         )
 
-        plt.xlabel("Predicted label (%)")
-        plt.ylabel("True label (%)")
+        ax.set_xlabel("Predicted label (%)")
+        ax.set_ylabel("True label (%)")
+        fig.tight_layout()
         plt.savefig(f"plots/confusion_train{mode}_norm.{vis_format}", dpi=300)
 
         if writer:
@@ -769,15 +806,22 @@ def accuracy_plot(
             ax=ax,
             xticks_rotation=90,
             values_format="d",
+            colorbar=False,
         )
-        plt.tight_layout()
-        plt.title(
+        divider = make_axes_locatable(ax)
+        colorbar_ax = divider.append_axes("right", size="5%", pad=0.1)
+        fig.colorbar(disp_eval.im_, cax=colorbar_ax)
+        colorbar_ax.tick_params(labelsize=font_size)
+        plt.setp(disp_eval.text_.ravel(), fontsize=value_font_size)
+        ax.set_title(
             "Average accuracy at epoch {}: {:.1f}%".format(
                 epoch + 1,
                 np.mean(avg_accuracy_eval[supported_eval_classes]) * 100,
             ),
-            fontsize=font_size + 2,
+            fontsize=title_font_size,
+            fontweight="normal",
         )
+        fig.tight_layout()
         plt.savefig(figure_name + f".{vis_format}", dpi=300)
         plt.close()
 
@@ -789,18 +833,25 @@ def accuracy_plot(
             xticks_rotation=90,
             values_format=".0f",
             im_kw={"vmin": 0, "vmax": 100},
+            colorbar=False,
         )
+        divider = make_axes_locatable(ax)
+        colorbar_ax = divider.append_axes("right", size="5%", pad=0.1)
+        fig.colorbar(dispn_eval.im_, cax=colorbar_ax)
+        colorbar_ax.tick_params(labelsize=font_size)
+        plt.setp(dispn_eval.text_.ravel(), fontsize=value_font_size)
 
-        plt.tight_layout()
-        plt.title(
+        ax.set_title(
             "Average accuracy at epoch {}: {:.1f}% ".format(
                 epoch + 1,
                 np.mean(avg_accuracy_eval[supported_eval_classes]) * 100,
             ),
-            fontsize=10,
+            fontsize=title_font_size,
+            fontweight="normal",
         )
-        plt.xlabel("Predicted label (%)")
-        plt.ylabel("True label (%)")
+        ax.set_xlabel("Predicted label (%)")
+        ax.set_ylabel("True label (%)")
+        fig.tight_layout()
         plt.savefig(f"{figure_name}_norm.{vis_format}", dpi=300)
         plt.close()
 
@@ -842,8 +893,7 @@ def f1_plot(
     logging.info("Visualising F1 scores ...\n")
     classes_list = np.unique(np.concatenate((y_train, ypred_train)))
     classes_list_eval = np.unique(np.concatenate((y_val, ypred_val)))
-    fig_size = max(6, int(len(classes_list)) / 2)
-    font_size = max(8, int(len(classes_list) / 3) + 3)
+    fig_size, font_size, title_font_size = _class_plot_scale(len(classes_list))
 
     if np.setdiff1d(classes_list_eval, classes_list).size > 0:
         logging.info(
@@ -906,11 +956,28 @@ def f1_plot(
         }
     ):
         fig, ax = plt.subplots(figsize=(fig_size, fig_size))
-        plt.plot(classes_list, train_f1_score, label="train", marker="o")
-        plt.plot(classes_list, valid_f1_score, label=label, marker="o")
+        line_width = max(1.5, font_size / 6)
+        plt.plot(
+            classes_list,
+            train_f1_score,
+            label="train",
+            marker="o",
+            linewidth=line_width,
+        )
+        plt.plot(
+            classes_list,
+            valid_f1_score,
+            label=label,
+            marker="o",
+            linewidth=line_width,
+        )
         plt.xticks(rotation=45)
         plt.legend(loc="lower left")
-        plt.title("F1 Score at epoch {}".format(epoch + 1))
+        plt.title(
+            "F1 Score at epoch {}".format(epoch + 1),
+            fontsize=title_font_size,
+            fontweight="normal",
+        )
         plt.ylabel("F1 Score")
         plt.tight_layout()
         plt.savefig(f"plots/f1{mode}.{vis_format}", dpi=150)
@@ -970,6 +1037,9 @@ def loss_plot(
         "VAL KL divergence loss x BETA",
         "VAL Affinity loss x GAMMA",
     ]
+    title_font_size = 12
+    label_font_size = 10
+    tick_font_size = 9
 
     plt.clf()
     plt.ticklabel_format(useOffset=False)
@@ -1006,17 +1076,19 @@ def loss_plot(
             return
         plt.title(
             "bs: %d, d: %d, ch: %d, lat: %d, lr: %.3f, beta: %.1f, "
-            "gamma: %.1f" % (p[0], p[1], p[2], p[3], p[4], p[5], p[6])
+            "gamma: %.1f" % (p[0], p[1], p[2], p[3], p[4], p[5], p[6]),
+            fontsize=title_font_size,
+            fontweight="normal",
         )
     else:
-        plt.title("Loss")
+        plt.title("Loss", fontsize=title_font_size, fontweight="normal")
 
     plt.yscale("log")
-    plt.ylabel("Loss", fontsize=16)
-    plt.xlabel("Epochs", fontsize=16)
-    plt.xticks(fontsize=16)
-    plt.yticks(fontsize=16)
-    plt.legend()
+    plt.ylabel("Loss", fontsize=label_font_size)
+    plt.xlabel("Epochs", fontsize=label_font_size)
+    plt.xticks(fontsize=tick_font_size)
+    plt.yticks(fontsize=tick_font_size)
+    plt.legend(fontsize=tick_font_size)
 
     plt.tight_layout()
     if not os.path.exists("plots"):
@@ -1041,11 +1113,11 @@ def loss_plot(
             label=vlabs[0],
         )
     plt.yscale("log")
-    plt.ylabel("Loss", fontsize=16)
-    plt.xlabel("Epochs", fontsize=16)
-    plt.xticks(fontsize=16)
-    plt.yticks(fontsize=16)
-    plt.legend()
+    plt.ylabel("Loss", fontsize=label_font_size)
+    plt.xlabel("Epochs", fontsize=label_font_size)
+    plt.xticks(fontsize=tick_font_size)
+    plt.yticks(fontsize=tick_font_size)
+    plt.legend(fontsize=tick_font_size)
     plt.tight_layout()
     plt.savefig(f"plots/loss_total.{vis_format}", dpi=300)
     plt.close()
@@ -1775,19 +1847,16 @@ def plot_affinity_matrix(
     )
     logging.info("Visualising affinity matrix ...\n")
 
-    fig_size = (
-        fig_size if fig_size is not None else max(6, int(len(all_classes) / 2))
+    resolved_fig_size, font_size, title_font_size = _class_plot_scale(
+        len(all_classes), fig_size
     )
-    font_size = max(8, int(len(all_classes) / 3) + 3)
 
-    # Create the figure and gridspec
-    fig = plt.figure(figsize=(fig_size, fig_size))
-    gs = gridspec.GridSpec(1, 2, width_ratios=[9, 0.4])
-
-    # Plot the data on the left grid
-    ax = fig.add_subplot(gs[0])
-    ax2 = fig.add_subplot(gs[1])
-    ax.set_title("Affinity Matrix", fontsize=font_size + 2)
+    fig, ax = plt.subplots(figsize=(resolved_fig_size, resolved_fig_size))
+    ax.set_title(
+        "Affinity Matrix",
+        fontsize=title_font_size,
+        fontweight="normal",
+    )
 
     im = ax.imshow(lookup, vmin=-1, vmax=1, cmap=plt.get_cmap("RdBu"))
 
@@ -1796,21 +1865,19 @@ def plot_affinity_matrix(
     ax.set_yticks(np.arange(0, len(all_classes)))
     ax.set_yticklabels(all_classes)
 
-    # Colour the label for selected classes
+    # Colour classes absent from the selected dataset.
     for i, c in enumerate(all_classes):
-        if c in selected_classes:
+        if c not in selected_classes:
             ax.get_xticklabels()[i].set_color("red")
             ax.get_yticklabels()[i].set_color("red")
 
-    ax.tick_params(axis="x", rotation=90, labelsize=16)
-    ax.tick_params(axis="y", labelsize=16)
+    ax.tick_params(axis="x", rotation=90, labelsize=font_size)
+    ax.tick_params(axis="y", labelsize=font_size)
 
-    # Create an empty plot on the right grid
-    ax2 = plt.subplot(gs[1])
-
-    plt.colorbar(im, cax=ax2)
-    # Set the height of the color bar to match the height of the plot
-    # cb.ax.set_position([0.96, 0.01, 0.01, 0.01])
+    divider = make_axes_locatable(ax)
+    colorbar_ax = divider.append_axes("right", size="5%", pad=0.1)
+    fig.colorbar(im, cax=colorbar_ax)
+    colorbar_ax.tick_params(labelsize=font_size)
     fig.tight_layout()
     if not os.path.exists("plots"):
         os.mkdir("plots")
@@ -1836,17 +1903,22 @@ def plot_classes_distribution(
     )
     logging.info("Visualising classes distribution " + category + "...\n")
 
-    fig, ax = plt.subplots(figsize=(9, 9))
     labels, counts = np.unique(data, return_counts=True)
+    fig_size, font_size, title_font_size = _class_plot_scale(len(labels))
+    fig, ax = plt.subplots(figsize=(fig_size, fig_size))
     ticks = range(len(counts))
-    plt.bar(ticks, counts, align="center", color="blue", alpha=0.5)
-    plt.xticks(ticks, labels)
-    plt.title("Classes Distribution", fontsize=16)
-    plt.xlabel("Class", fontsize=16)
-    plt.ylabel("Number of Entries", fontsize=16)
-    plt.xticks(fontsize=16, rotation=90)
-    plt.yticks(fontsize=16)
-    plt.tight_layout()
+    ax.bar(ticks, counts, align="center", color="blue", alpha=0.5)
+    ax.set_xticks(ticks, labels)
+    ax.set_title(
+        "Classes Distribution",
+        fontsize=title_font_size,
+        fontweight="normal",
+    )
+    ax.set_xlabel("Class", fontsize=font_size)
+    ax.set_ylabel("Number of Entries", fontsize=font_size)
+    ax.tick_params(axis="x", labelsize=font_size, rotation=90)
+    ax.tick_params(axis="y", labelsize=font_size)
+    fig.tight_layout()
     if not os.path.exists("plots"):
         os.mkdir("plots")
     plt.savefig(f"plots/classes_distribution_{category}.{vis_format}", dpi=300)
@@ -1877,7 +1949,7 @@ def plot_cyc_variable(
     plt.tight_layout()
     if not os.path.exists("plots"):
         os.mkdir("plots")
-    plt.savefig(f"plots/{variable_name}_array.{vis_format}", dpi=300)
+    plt.savefig(f"plots/hyperaparam_{variable_name}.{vis_format}", dpi=300)
     plt.close()
 
 
@@ -1934,10 +2006,9 @@ def latent_space_similarity_plot(
             unique_classes = classes_order
 
     num_classes = len(unique_classes)
-    fig_size = (
-        fig_size if fig_size is not None else max(6, int(num_classes / 2))
+    resolved_fig_size, font_size, title_font_size = _class_plot_scale(
+        num_classes, fig_size
     )
-    font_size = max(8, int(num_classes / 3) + 3)
     cosine_sim = latent_space_similarity_mat(
         latent_space,
         class_labels,
@@ -1954,24 +2025,43 @@ def latent_space_similarity_plot(
                 "font.size": font_size,
             }
         ):
-            fig, ax = plt.subplots(figsize=(fig_size, fig_size))
+            fig, ax = plt.subplots(
+                figsize=(resolved_fig_size, resolved_fig_size)
+            )
     else:
-        fig, ax = plt.subplots(figsize=(fig_size, fig_size))
-    fig.tight_layout()
-    plt.imshow(cosine_sim, cmap="RdBu", vmin=-1, vmax=1)
-    plt.colorbar(label="Average Cosine Similarity")
-    plt.xticks(ticks=np.arange(num_classes), labels=unique_classes)
-    plt.yticks(ticks=np.arange(num_classes), labels=unique_classes)
-    plt.title(f"Average Cosine Similarity Matrix at epoch :{epoch}")
-    plt.xlabel("Class Labels")
-    plt.ylabel("Class Labels")
+        fig, ax = plt.subplots(figsize=(resolved_fig_size, resolved_fig_size))
+    im = ax.imshow(cosine_sim, cmap="RdBu", vmin=-1, vmax=1)
+    divider = make_axes_locatable(ax)
+    colorbar_ax = divider.append_axes("right", size="5%", pad=0.1)
+    fig.colorbar(im, cax=colorbar_ax)
+    colorbar_ax.tick_params(labelsize=font_size)
+    ax.set_xticks(np.arange(num_classes), labels=unique_classes)
+    ax.set_yticks(np.arange(num_classes), labels=unique_classes)
+    ax.set_title(
+        f"Average Cosine Similarity Matrix at epoch: {epoch + 1}",
+        fontsize=title_font_size,
+        fontweight="normal",
+    )
+    ax.set_xlabel("Class Labels", fontsize=font_size)
+    ax.set_ylabel("Class Labels", fontsize=font_size)
     ax.tick_params(axis="x", rotation=90, labelsize=font_size)
     ax.tick_params(axis="y", labelsize=font_size)
+    classes_in_data = set(np.asarray(class_labels).astype(str))
+    for class_name, x_label, y_label in zip(
+        unique_classes, ax.get_xticklabels(), ax.get_yticklabels()
+    ):
+        if str(class_name) not in classes_in_data:
+            x_label.set_color("red")
+            y_label.set_color("red")
+    fig.tight_layout()
 
     if not display:
         if not os.path.exists("plots"):
             os.mkdir("plots")
-        plt.savefig(f"plots/similarity_mean{mode}.{vis_format}", dpi=dpi)
+        plt.savefig(
+            f"plots/similarity_mean{mode}.{vis_format}",
+            dpi=dpi,
+        )
         plt.close()
     else:
         plt.show()

@@ -121,6 +121,13 @@ class ConfigTest(unittest.TestCase):
         data_config_only = load_config_params(config_file=self.config)
         self.assertEqual(data_config_only.epochs, 1000)
 
+        data_cli_frequency = load_config_params(
+            config_file=self.config,
+            local_args={"freq_all": 5, "freq_acc": 3},
+        )
+        self.assertEqual(data_cli_frequency.freq_acc, 3)
+        self.assertEqual(data_cli_frequency.freq_rec, 5)
+
         data_local_data_only = load_config_params(local_args=self.data_local)
         self.assertEqual(data_local_data_only.epochs, 150)
         self.assertEqual(

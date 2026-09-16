@@ -98,10 +98,16 @@ def save_imshow_png(
         if not os.path.exists("plots"):
             os.mkdir("plots")
 
-        fig, _ = plt.subplots(figsize=(10, 10))
-        plt.imshow(array, cmap=cmap, vmin=min, vmax=max)  # channels last
-
-        plt.savefig("plots/" + fname)
+        height, width = array.shape[:2]
+        if width >= height:
+            image_figure_size = (10, 10 * height / width)
+        else:
+            image_figure_size = (10 * width / height, 10)
+        fig, ax = plt.subplots(figsize=image_figure_size)
+        ax.imshow(array, cmap=cmap, vmin=min, vmax=max)  # channels last
+        ax.axis("off")
+        fig.subplots_adjust(left=0, right=1, bottom=0, top=1)
+        fig.savefig("plots/" + fname, bbox_inches="tight", pad_inches=0)
 
         if writer:
             writer.add_figure(figname, fig, epoch)
