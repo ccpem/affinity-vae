@@ -1046,8 +1046,8 @@ def recon_plot(
     )
     logging.info("Visualising reconstructions " + mode + "...\n")
 
-    fname_in = f"{str(mode)}_recon_in.{vis_format}"
-    fname_out = f"{str(mode)}_recon_out.{vis_format}"
+    fname_in = f"recon_{mode}_in.{vis_format}"
+    fname_out = f"recon_{mode}_out.{vis_format}"
 
     if data_dim == 3:
         img_2d = img[:, :, :, :, img.shape[-1] // 2]
@@ -1137,9 +1137,9 @@ def recon_plot(
                 for i, source_index in enumerate(selected_indices)
             )
 
-        save_mrc_file(str(mode) + "_recons.mrc", grid_for_napari)
+        save_mrc_file(f"recon_{mode}.mrc", grid_for_napari)
         pd.DataFrame(reconstruction_index).to_csv(
-            f"plots/{mode}_recons.csv", index=False
+            f"plots/recon_{mode}.csv", index=False
         )
 
 

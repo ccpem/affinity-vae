@@ -183,7 +183,7 @@ class VisPipelineTest(unittest.TestCase):
                         ["a", "b", "c", "d"],
                         data_dim=3,
                     )
-                reconstruction_index = pd.read_csv("plots/trn_recons.csv")
+                reconstruction_index = pd.read_csv("plots/recon_trn.csv")
             finally:
                 os.chdir(original_cwd)
 
