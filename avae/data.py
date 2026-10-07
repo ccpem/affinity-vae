@@ -209,8 +209,8 @@ def load_data(
 
         # Plot the complete splits once, before Fabric shards the loaders.
         if vis_his and fabric.global_rank == 0:
-            train_y = list(sum([y[1] for _, y in enumerate(trains)], ()))
-            val_y = list(sum([y[1] for _, y in enumerate(vals)], ()))
+            train_y = _labels(trains.dataset)
+            val_y = _labels(vals.dataset)
             plot_classes_distribution(
                 train_y,
                 "train",
@@ -266,7 +266,7 @@ def load_data(
         tests = test_loader.get_loader(batch_size=batch)
 
         if vis_his and fabric.global_rank == 0:
-            eval_y = list(sum([y[1] for _, y in enumerate(tests)], ()))
+            eval_y = _labels(test_loader.dataset)
             plot_classes_distribution(
                 eval_y,
                 "evaluation",
@@ -371,6 +371,21 @@ def get_affinity_matrix(
         return None
 
 
+def _labels(dataset, indices=None) -> list:
+    """Get labels from file names (no data loading) for a dataset with `paths`
+    or a torch Subset of one. `indices` selects positions within `dataset`."""
+    if isinstance(dataset, torch.utils.data.Subset):
+        indices = (
+            list(dataset.indices)
+            if indices is None
+            else [dataset.indices[i] for i in indices]
+        )
+        dataset = dataset.dataset
+    if indices is None:
+        indices = range(len(dataset.paths))
+    return [pathlib.Path(dataset.paths[i]).name.split("_")[0] for i in indices]
+
+
 class AffinityDiskDataset(caked.dataloader.DiskDataset):
     """Modified version of the caked DiskDataset to include the affinity matrix and data metadata that is needed for the
     affinity pipeline"""
@@ -401,7 +416,7 @@ class AffinityDiskDataset(caked.dataloader.DiskDataset):
         # get file basename
         filename = pathlib.Path(self.paths[index]).name
         # ground truth
-        y = pathlib.Path(filename).name.split("_")[0]
+        y = _labels(self, [index])[0]
 
         # similarity column / vector
         if self.affinity is not None:

@@ -6,8 +6,9 @@ from unittest import mock
 
 import lightning as lt
 import numpy as np
+import torch.utils.data
 
-from avae.data import get_affinity_matrix, load_data
+from avae.data import _labels, get_affinity_matrix, load_data
 from tests import testdata_mrc
 
 
@@ -216,3 +217,20 @@ class AffinityPlotCacheTest(unittest.TestCase):
         t = os.path.getmtime(self.plot)
         os.utime(self.csv, (t + 10, t + 10))
         self.assertEqual(self._run().call_count, 1)
+
+
+class LabelsTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.dataset = mock.MagicMock()
+        self.dataset.paths = ["/a/x_1.mrc", "/a/y_2.mrc", "/a/x_3.mrc"]
+
+    def test_plain_dataset(self):
+        self.assertEqual(_labels(self.dataset), ["x", "y", "x"])
+        self.dataset.read.assert_not_called()
+        self.dataset.__getitem__.assert_not_called()
+
+    def test_subset(self):
+        subset = torch.utils.data.Subset(self.dataset, [2, 1])
+        self.assertEqual(_labels(subset), ["x", "y"])
+        self.dataset.read.assert_not_called()
+        self.dataset.__getitem__.assert_not_called()
