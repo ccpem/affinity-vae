@@ -5,8 +5,8 @@ import pytest
 import sklearn.metrics.pairwise
 
 from avae.base import dims_after_pooling
-from avae.utils import latent_space_similarity_mat
 from avae.utils_learning import combine_accuracy_data
+from avae.utils_vis import latent_space_similarity_mat
 
 
 @pytest.mark.parametrize(

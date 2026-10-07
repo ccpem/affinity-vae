@@ -20,7 +20,7 @@ import torch
 import torchvision
 
 from . import utils_learning
-from .utils import (
+from .utils_vis import (
     VECTOR_FORMATS,
     colour_per_class,
     create_grid_for_plotting,
