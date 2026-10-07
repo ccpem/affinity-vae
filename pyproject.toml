@@ -34,7 +34,6 @@ dependencies = [
     "requests",
     "scikit-image",
     "scikit-learn",
-    "tensorboard",
     "umap-learn",
     "caked@git+https://github.com/alan-turing-institute/caked/" #to be changed when caked is in pypi.
 ]

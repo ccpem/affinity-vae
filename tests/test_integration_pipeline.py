@@ -31,10 +31,10 @@ class TrainEvalIntegrationTest(unittest.TestCase):
         ) = helper_train_eval(data)
 
         self.assertEqual(n_dir_train, 3)
-        self.assertEqual(n_plots_train, 34)
+        self.assertEqual(n_plots_train, 33)
         self.assertEqual(n_latent_train, 1)
         self.assertEqual(n_states_train, 2)
-        self.assertEqual(n_plots_eval, 56)
+        self.assertEqual(n_plots_eval, 53)
         self.assertEqual(n_latent_eval, 2)
         self.assertEqual(n_states_eval, 3)
 

@@ -192,6 +192,7 @@ def evaluate(params):
             data_dim,
             mode="evl",
             vis_format=params.vis_format,
+            vis_print=params.vis_print,
         )
 
     # visualise latent disentanglement
@@ -204,6 +205,7 @@ def evaluate(params):
             poses=p_test,
             mode="_eval",
             vis_format=params.vis_format,
+            vis_print=params.vis_print,
         )
 
     # visualise pose disentanglement
@@ -216,6 +218,7 @@ def evaluate(params):
             device,
             mode="_eval",
             vis_format=params.vis_format,
+            vis_print=params.vis_print,
         )
 
     if pose_dims != 0 and params.vis_pose_class:
@@ -229,6 +232,7 @@ def evaluate(params):
             device,
             mode="_eval",
             vis_format=params.vis_format,
+            vis_print=params.vis_print,
         )
     # visualise interpolations
     if params.vis_int:
@@ -241,6 +245,7 @@ def evaluate(params):
             poses=p_test,
             mode="_eval",
             vis_format=params.vis_format,
+            vis_print=params.vis_print,
         )
 
     # visualise embeddings
@@ -251,6 +256,7 @@ def evaluate(params):
             classes_list,
             "_eval",
             vis_format=params.vis_format,
+            vis_print=params.vis_print,
             embedding=latent_embedding[eval_mask],
         )
 
@@ -260,6 +266,7 @@ def evaluate(params):
             np.array(y_test),
             mode="_eval",
             vis_format=params.vis_format,
+            vis_print=params.vis_print,
         )
 
     # ############################# Predict #############################
@@ -288,6 +295,7 @@ def evaluate(params):
             classes_list,
             "_train_eval_comparison",
             vis_format=params.vis_format,
+            vis_print=params.vis_print,
             embedding=latent_embedding,
         )
 
@@ -306,10 +314,10 @@ def evaluate(params):
         classifier=params.classifier,
     )
     logging.info(
-        "------------------->>> Accuracy: Train: %f | Val : %f | Val with unseen labels: %f\n"
+        "------------------->>> Overall accuracy: Train: %f | Val : %f | Val with unseen labels: %f\n"
         % (train_acc, val_acc_selected, val_acc)
     )
-    vis.accuracy_plot(
+    vis.confusion_plot(
         np.array(latents_training_id),
         ypred_train,
         y_test,
@@ -317,6 +325,7 @@ def evaluate(params):
         params.classes,
         mode="_eval",
         vis_format=params.vis_format,
+        vis_print=params.vis_print,
     )
     vis.f1_plot(
         np.array(latents_training_id),
@@ -325,6 +334,7 @@ def evaluate(params):
         ypred_val,
         mode="_eval",
         vis_format=params.vis_format,
+        vis_print=params.vis_print,
     )
     logging.info("Saving meta files with evaluation data.")
 

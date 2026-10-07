@@ -1,0 +1,293 @@
+import os.path
+import pathlib
+
+import matplotlib.pyplot as plt
+import mrcfile
+import numpy as np
+import numpy.typing as npt
+import torch
+
+SCREEN_HEIGHT_PX = 720  # top half of a 1440p screen
+VECTOR_FORMATS = ("pdf", "svg", "eps")
+
+
+def create_grid_for_plotting(
+    rows: int, columns: int, dsize: tuple, padding: int = 0
+) -> npt.NDArray:
+
+    # define the dimensions for the napari grid
+
+    if len(dsize) == 3:
+        grid_for_napari = np.zeros(
+            (
+                rows * dsize[0],
+                dsize[1] * columns + padding * columns,
+                dsize[2],
+            ),
+            dtype=np.float32,
+        )
+
+    elif len(dsize) == 2:
+        grid_for_napari = np.zeros(
+            (
+                rows * dsize[0],
+                dsize[1] * columns + padding * columns,
+            ),
+            dtype=np.float32,
+        )
+
+    return grid_for_napari
+
+
+def fill_grid_for_plottting(
+    rows: int,
+    columns: int,
+    grid: npt.NDArray,
+    dsize: tuple,
+    array: npt.NDArray,
+    padding: int = 0,
+) -> npt.NDArray:
+
+    if len(dsize) == 3:
+        for j in range(columns):
+            for i in range(rows):
+                grid[
+                    i * dsize[0] : (i + 1) * dsize[0],
+                    j * (dsize[1] + padding) : (j + 1) * dsize[1]
+                    + padding * j,
+                    :,
+                ] = array[i, j, :, :, :]
+
+    elif len(dsize) == 2:
+        for j in range(columns):
+            for i in range(rows):
+                grid[
+                    i * dsize[0] : (i + 1) * dsize[0],
+                    j * (dsize[1] + padding) : (j + 1) * dsize[1]
+                    + padding * j,
+                ] = array[i, j, :, :]
+    return grid
+
+
+def save_figure(
+    fig: plt.Figure,
+    path: str,
+    vis_format: str,
+    vis_print: bool = False,
+    display: bool = False,
+    cap_height: bool = True,
+) -> None:
+    """Save (or, with `display`, only show) a figure and close it.
+
+    Vector formats take no dpi. `vis_print` saves at 300 dpi and full size.
+    Otherwise, with `cap_height`, the dpi is lowered so the figure is at most
+    SCREEN_HEIGHT_PX tall, as large figures cost time and space to rasterise.
+    """
+    if display:
+        plt.show()
+        plt.close(fig)
+        return
+
+    pathlib.Path(path).parent.mkdir(parents=True, exist_ok=True)
+    kwargs: dict = {}
+    if vis_format not in VECTOR_FORMATS:
+        dpi = plt.rcParams["figure.dpi"]
+        if vis_print:
+            dpi = 300
+        elif cap_height:
+            dpi = min(dpi, SCREEN_HEIGHT_PX / fig.get_figheight())
+        kwargs["dpi"] = dpi
+    if vis_format == "png":
+        kwargs["pil_kwargs"] = {"compress_level": 3}
+    fig.savefig(path, **kwargs)
+    plt.close(fig)
+
+
+def save_imshow_png(
+    fname: str,
+    array: npt.NDArray,
+    cmap: str | None = None,
+    min: float | None = None,
+    max: float | None = None,
+    display: bool = False,
+    vis_print: bool = False,
+) -> None:
+    height, width = array.shape[:2]
+    if width >= height:
+        image_figure_size = (10, 10 * height / width)
+    else:
+        image_figure_size = (10 * width / height, 10)
+    fig, ax = plt.subplots(figsize=image_figure_size)
+    ax.imshow(array, cmap=cmap, vmin=min, vmax=max)  # channels last
+    ax.axis("off")
+    fig.subplots_adjust(left=0, right=1, bottom=0, top=1)
+    save_figure(
+        fig,
+        "plots/" + fname,
+        fname.rsplit(".", 1)[-1],
+        vis_print,
+        display,
+        cap_height=False,
+    )
+
+
+def save_mrc_file(fname: str, array: npt.NDArray) -> None:
+    if not os.path.exists("plots"):
+        os.mkdir("plots")
+    with mrcfile.new("plots/" + fname, overwrite=True) as mrc:
+        mrc.set_data(array)
+
+
+def colour_per_class(classes: list) -> list:
+    # Define the number of colors you want
+    num_colors = len(classes)
+
+    # Choose colormaps for combining
+    cmap_1 = plt.get_cmap("tab20")
+    cmap_2 = plt.get_cmap("Accent")
+    cmap_3 = plt.get_cmap("Pastel1")
+    cmap_4 = plt.get_cmap("Set1")
+
+    # Combine the four colormaps
+    combined_cmap = [cmap_1(i % 20) for i in range(20)]
+    combined_cmap.extend([cmap_2(i % 8) for i in range(8)])
+    combined_cmap.extend([cmap_3(i % 8) for i in range(8)])
+    combined_cmap.extend([cmap_4(i % 8) for i in range(8)])
+
+    # Create the colormap object
+    custom_cmap = plt.cm.colors.ListedColormap(
+        combined_cmap, name="custom_cmap"
+    )
+
+    # Generate a list of colors based on the modulo operation of i with respect to the number of colors in the combined colormap
+    colours = [custom_cmap(i % len(combined_cmap)) for i in range(num_colors)]
+    return colours
+
+
+def pose_interpolation(
+    enc: npt.NDArray,
+    pos_dims: int,
+    pose_mean: npt.NDArray,
+    pose_std: npt.NDArray,
+    dsize: tuple,
+    number_of_samples: int,
+    vae: torch.nn.Module,
+    device: torch.device,
+) -> npt.NDArray:
+    """This function:
+    1-  interpolates within each pose channels
+        for the number_of_samples requested.
+    2- returns all decoded images based on the input latent
+        and the interpolated pose
+
+    Parameters
+    ----------
+    enc: numpy array
+        the latent encoding.
+    pos_dims: int
+        the pose channel dimension
+    pose_mean: numpy array
+        mean of each pose channel.
+    pose_std: numpy array
+        standard deviation of each pose channel.
+    dsize: torch.size
+        the dimension of the data. Example [32,32,32]
+    number_of_samples: int
+        number of samples to interpolate for.
+    vae: torch.nn.Module
+        Affinity vae model.
+    device: torch.device
+        Device to run the model on.
+    """
+    # Single transversals along each pose channel, row-major: p_dim, grid_spot
+    steps = -1.2 + 0.4 * np.arange(number_of_samples)
+    pose_mean = np.asarray(pose_mean)
+    means = np.tile(pose_mean, (pos_dims, number_of_samples, 1))
+    means[
+        np.arange(pos_dims)[:, None],
+        np.arange(number_of_samples)[None, :],
+        np.arange(pos_dims)[:, None],
+    ] += (np.asarray(pose_std)[:, None] * steps[None, :]).astype(means.dtype)
+    means = means.reshape(-1, means.shape[-1])
+
+    n = means.shape[0]
+    pos = torch.from_numpy(means).to(device)
+    lat = torch.from_numpy(np.array(enc)).unsqueeze(0).expand(n, -1).to(device)
+
+    # Decode all interpolated vectors in a single batched call
+    with torch.no_grad():
+        decoded_img = vae.decoder(lat, pos)
+
+    decoded_grid = np.reshape(
+        decoded_img.cpu().numpy(), (pos_dims, number_of_samples, *dsize)
+    )
+
+    return decoded_grid
+
+
+def latent_space_similarity_mat(
+    latent_space: npt.NDArray,
+    class_labels: npt.NDArray,
+    unique_classes: list,
+    num_classes: int,
+    plot_mode: str = "",
+) -> npt.NDArray:
+    """
+    This function calculates the similarity (affinity) between classes in the latent space and builds a matrix.
+    Parameters
+    ----------
+    latent_space: np.ndarray
+        The latent space
+    class_labels: np.array
+        The labels of the latent space
+    mode: str
+        Mode of the calculation (train, test, val)
+    epoch: int
+        Epoch number for title
+    display: bool
+        When this variable is set to true, the function only dispalys the plot and doesnt save it.
+    """
+    # The cosine similarity of two vectors is the dot product of their unit
+    # length versions: cos(a, b) = u_a . u_b, with u = x / |x|. Averaging it
+    # over all pairs of two classes therefore reduces to dot products of
+    # per-class sums of unit vectors, so the N x N similarity matrix never
+    # needs to be built:
+    #   mean_ij = (S_i . S_j) / (n_i n_j),        S_c = sum of u over class c
+    # For the std, the squared similarity (u_a . u_b)^2 equals the Frobenius
+    # product <u_a u_a^T, u_b u_b^T>_F, so the mean squared similarity is
+    #   E_ij[s^2] = <M_i, M_j>_F / (n_i n_j),    M_c = sum of u u^T in class c
+    # and std_ij = sqrt(E_ij[s^2] - mean_ij^2).
+    # Self-pairs are included on the diagonal, as in the full pairwise version.
+    latent_space = np.asarray(latent_space, dtype=np.float64)
+    class_labels = np.asarray(class_labels)
+    # unit length latent vectors; zero vectors stay zero (similarity 0)
+    norms = np.linalg.norm(latent_space, axis=1, keepdims=True)
+    unit = latent_space / np.where(norms == 0, 1.0, norms)
+
+    latent_dims = unit.shape[1]
+    counts = np.zeros(num_classes)
+    sums = np.zeros((num_classes, latent_dims))
+    outer_sums = np.zeros((num_classes, latent_dims * latent_dims))
+    for i in range(num_classes):
+        class_unit = unit[class_labels == unique_classes[i]]
+        counts[i] = len(class_unit)
+        sums[i] = class_unit.sum(axis=0)
+        if plot_mode == "std":
+            outer_sums[i] = (class_unit.T @ class_unit).ravel()
+
+    pair_counts = np.outer(counts, counts)
+    has_pairs = pair_counts > 0
+    safe_pair_counts = np.where(has_pairs, pair_counts, 1.0)
+    mean_sim = (sums @ sums.T) / safe_pair_counts
+
+    cosine_sim_mat = np.zeros((num_classes, num_classes))
+    if plot_mode == "mean":
+        cosine_sim_mat = mean_sim
+    elif plot_mode == "std":
+        second_moment = (outer_sums @ outer_sums.T) / safe_pair_counts
+        cosine_sim_mat = np.sqrt(
+            np.clip(second_moment - mean_sim**2, 0, None)
+        )
+    cosine_sim_mat[~has_pairs] = 0.0
+
+    return cosine_sim_mat

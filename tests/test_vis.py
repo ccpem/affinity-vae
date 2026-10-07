@@ -75,7 +75,7 @@ class VisPipelineTest(unittest.TestCase):
         self.data.vis_z_n_int = "1,2"
 
         vis_calls = {
-            "accuracy_plot": 1,
+            "confusion_plot": 1,
             "f1_plot": 1,
             "recon_plot": 2,
             "latent_space_similarity_plot": 2,
@@ -149,7 +149,7 @@ class VisPipelineTest(unittest.TestCase):
         # Accuracy is computed once and reused by both accuracy renderers.
         self.assertEqual(compute_accuracy.call_count, 1)
         self.assertEqual(
-            patched_vis["accuracy_plot"].call_args.kwargs["epoch"], 0
+            patched_vis["confusion_plot"].call_args.kwargs["epoch"], 0
         )
         # Separate latent and pose spaces each require one t-SNE calculation.
         self.assertEqual(compute_tsne.call_count, 2)
@@ -223,7 +223,7 @@ class VisPipelineTest(unittest.TestCase):
         # Loss rendering writes both component and total-loss views.
         self.assertEqual(plot_files, {"loss.png", "loss_total.png"})
 
-    def test_accuracy_plot_handles_class_absent_from_validation(self):
+    def test_confusion_plot_handles_class_absent_from_validation(self):
         original_cwd = os.getcwd()
 
         with tempfile.TemporaryDirectory(prefix="avae-accuracy-") as temp_dir:
@@ -236,7 +236,7 @@ class VisPipelineTest(unittest.TestCase):
                     ) as plot_title,
                 ):
                     with np.errstate(divide="raise", invalid="raise"):
-                        vis.accuracy_plot(
+                        vis.confusion_plot(
                             np.array(["a", "a", "b", "b"]),
                             np.array(["a", "a", "b", "b"]),
                             np.array(["a", "a"]),

@@ -2,9 +2,11 @@ from unittest import mock
 
 import numpy as np
 import pytest
+import sklearn.metrics.pairwise
 
 from avae.base import dims_after_pooling
 from avae.utils_learning import combine_accuracy_data
+from avae.utils_vis import latent_space_similarity_mat
 
 
 @pytest.mark.parametrize(
@@ -73,3 +75,30 @@ def test_combine_accuracy_data_rejects_missing_rank():
         pytest.raises(RuntimeError, match="was not gathered from every rank"),
     ):
         combine_accuracy_data(*local_data, True, 2)
+
+
+@pytest.mark.parametrize("plot_mode", ["mean", "std"])
+def test_latent_space_similarity_mat_matches_pairwise(plot_mode):
+    """Vectorised class similarity equals averaging the full pairwise matrix,
+    including classes missing from the data."""
+    rng = np.random.default_rng(0)
+    latent_space = rng.normal(size=(60, 5))
+    latent_space[0] = 0.0
+    class_labels = rng.choice(["a", "b", "c"], size=60)
+    unique_classes = ["c", "a", "missing", "b"]
+
+    pairwise = sklearn.metrics.pairwise.cosine_similarity(latent_space)
+    reduce = np.mean if plot_mode == "mean" else np.std
+    expected = np.zeros((4, 4))
+    for i, class_i in enumerate(unique_classes):
+        for j, class_j in enumerate(unique_classes):
+            block = pairwise[class_labels == class_i][
+                :, class_labels == class_j
+            ]
+            if block.size:
+                expected[i, j] = reduce(block)
+
+    result = latent_space_similarity_mat(
+        latent_space, class_labels, unique_classes, 4, plot_mode=plot_mode
+    )
+    np.testing.assert_allclose(result, expected, atol=1e-7)

@@ -5,7 +5,6 @@ import lightning as lt
 import numpy as np
 import pandas as pd
 import torch
-import torch.utils.tensorboard
 
 from . import utils_learning, vis
 from .cyc_annealing import setup_annealing
@@ -35,12 +34,6 @@ def train(params):
     """
 
     lt.pytorch.seed_everything(42)
-
-    # ############################### LOGGING #################################
-
-    writer = (
-        torch.utils.tensorboard.SummaryWriter() if params.tensorboard else None
-    )
 
     # ############################### GPU SETUP ################################
 
@@ -83,8 +76,18 @@ def train(params):
         cycle_load=params.gamma_load,
     )
     if rank_zero and params.vis_cyc:
-        vis.plot_cyc_variable(beta_arr, "beta", vis_format=params.vis_format)
-        vis.plot_cyc_variable(gamma_arr, "gamma", vis_format=params.vis_format)
+        vis.plot_cyc_variable(
+            beta_arr,
+            "beta",
+            vis_format=params.vis_format,
+            vis_print=params.vis_print,
+        )
+        vis.plot_cyc_variable(
+            gamma_arr,
+            "gamma",
+            vis_format=params.vis_format,
+            vis_print=params.vis_print,
+        )
 
     # ############################### DATA ###############################
     trains, vals, tests, affinity_matrix, data_dim = load_data(
@@ -104,6 +107,7 @@ def train(params):
         vis_his=params.vis_his,
         vis_aff=params.vis_aff,
         vis_format=params.vis_format,
+        vis_print=params.vis_print,
         fabric=fabric,
     )
 
@@ -300,12 +304,6 @@ def train(params):
                 )
             )
 
-            if writer:
-                for i, loss_name in enumerate(
-                    ["Loss", "Recon loss", "KLdiv loss", "Affin loss"]
-                ):
-                    writer.add_scalar(loss_name, v_history[-1][i], epoch)
-
             # ########################## TEST #####################################
             if params.freq_eval != 0 and (epoch + 1) % params.freq_eval == 0:
                 for batch_number, (t, ys, aff, meta_data) in enumerate(
@@ -469,17 +467,17 @@ def train(params):
                 )
 
                 logging.info(
-                    "------------------->>> Accuracy: Train: %f | Val: %f\n"
+                    "------------------->>> Overall accuracy: Train: %f | Val: %f\n"
                     % (train_acc, val_acc),
                 )
-                vis.accuracy_plot(
+                vis.confusion_plot(
                     y_train_all,
                     ypred_train,
                     y_val_all,
                     ypred_val,
                     epoch=epoch,
-                    writer=writer,
                     vis_format=params.vis_format,
+                    vis_print=params.vis_print,
                 )
 
                 vis.f1_plot(
@@ -488,8 +486,8 @@ def train(params):
                     y_val_all,
                     ypred_val,
                     epoch=epoch,
-                    writer=writer,
                     vis_format=params.vis_format,
+                    vis_print=params.vis_print,
                 )
 
         # visualise loss
@@ -511,6 +509,7 @@ def train(params):
                 v_history,
                 p=p,
                 vis_format=params.vis_format,
+                vis_print=params.vis_print,
             )
 
         # visualise reconstructions - last batch
@@ -521,9 +520,8 @@ def train(params):
                 y_train,
                 data_dim,
                 mode="trn",
-                epoch=epoch,
-                writer=writer,
                 vis_format=params.vis_format,
+                vis_print=params.vis_print,
             )
             vis.recon_plot(
                 v,
@@ -531,9 +529,8 @@ def train(params):
                 y_val,
                 data_dim,
                 mode="val",
-                epoch=epoch,
-                writer=writer,
                 vis_format=params.vis_format,
+                vis_print=params.vis_print,
             )
 
         # visualise mean and logvar similarity matrix
@@ -545,6 +542,7 @@ def train(params):
                 epoch=epoch,
                 affinity_matrix=params.affinity,
                 vis_format=params.vis_format,
+                vis_print=params.vis_print,
             )
             vis.latent_space_similarity_plot(
                 z_val,
@@ -553,6 +551,7 @@ def train(params):
                 epoch=epoch,
                 affinity_matrix=params.affinity,
                 vis_format=params.vis_format,
+                vis_print=params.vis_print,
             )
 
         # visualise embeddings
@@ -561,8 +560,8 @@ def train(params):
                 embedding_xs,
                 embedding_ys,
                 epoch=epoch,
-                writer=writer,
                 vis_format=params.vis_format,
+                vis_print=params.vis_print,
                 embedding=latent_embedding,
             )
 
@@ -571,9 +570,9 @@ def train(params):
                     pose_xs,
                     embedding_ys,
                     epoch=epoch,
-                    writer=writer,
                     mode="pose",
                     vis_format=params.vis_format,
+                    vis_print=params.vis_print,
                     embedding=pose_embedding,
                 )
 
@@ -600,6 +599,7 @@ def train(params):
                 device,
                 poses=p_train if pose else None,
                 vis_format=params.vis_format,
+                vis_print=params.vis_print,
             )
 
         # visualise pose disentanglement
@@ -616,6 +616,7 @@ def train(params):
                 vae,
                 device,
                 vis_format=params.vis_format,
+                vis_print=params.vis_print,
             )
 
             if params.vis_pose_class is not None:
@@ -628,6 +629,7 @@ def train(params):
                     vae,
                     device,
                     vis_format=params.vis_format,
+                    vis_print=params.vis_print,
                 )
 
         # visualise interpolations
@@ -657,6 +659,7 @@ def train(params):
                     params.vis_z_n_int,
                     poses=ps,
                     vis_format=params.vis_format,
+                    vis_print=params.vis_print,
                 )
 
             vis.interpolations_plot(
@@ -667,6 +670,7 @@ def train(params):
                 device,
                 poses=ps,  # do we need val and test here?
                 vis_format=params.vis_format,
+                vis_print=params.vis_print,
             )
         # ########################## SAVE STATE ###############################
         if params.freq_sta != 0 and (epoch + 1) % params.freq_sta == 0:
@@ -720,7 +724,3 @@ def train(params):
 
                 logging.info(f"Saved meta file : {filename} for evaluation \n")
         fabric.barrier()
-
-    if writer:
-        writer.flush()
-        writer.close()

@@ -10,7 +10,6 @@ requests
 scikit-image
 scikit-learn
 scipy
-tensorboard
 torch
 torchvision
 umap-learn

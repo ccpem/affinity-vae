@@ -6,8 +6,9 @@ from unittest import mock
 
 import lightning as lt
 import numpy as np
+import torch.utils.data
 
-from avae.data import load_data
+from avae.data import _labels, get_affinity_matrix, load_data
 from tests import testdata_mrc
 
 
@@ -160,3 +161,76 @@ class DataTest(unittest.TestCase):
 
         plot_affinity.assert_not_called()
         plot_distribution.assert_not_called()
+
+
+class AffinityPlotCacheTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self._orig_dir = os.getcwd()
+        self.test_dir = tempfile.mkdtemp(prefix="avae_")
+        os.chdir(self.test_dir)
+        self.csv = os.path.join(self.test_dir, "affinity.csv")
+        with open(self.csv, "w") as f:
+            f.write("a,b\n1,0\n0,1\n")
+        self.plot = os.path.join("plots", "affinity_matrix.png")
+
+    def tearDown(self):
+        os.chdir(self._orig_dir)
+        shutil.rmtree(self.test_dir, ignore_errors=True)
+
+    def _run(self, classes=("a", "b"), vis_print=False):
+        def fake_plot(**kwargs):
+            os.makedirs("plots", exist_ok=True)
+            with open(self.plot, "w") as f:
+                f.write("x")
+
+        with mock.patch(
+            "avae.data.plot_affinity_matrix", side_effect=fake_plot
+        ) as m:
+            get_affinity_matrix(
+                self.csv, list(classes), vis_aff=True, vis_print=vis_print
+            )
+        return m
+
+    def test_replots_when_vis_print_changes(self):
+        self._run()
+        t = os.path.getmtime(self.csv)
+        os.utime(self.plot, (t + 10, t + 10))
+        self.assertEqual(self._run(vis_print=True).call_count, 1)
+
+    def test_replots_when_selected_classes_change(self):
+        self._run()
+        t = os.path.getmtime(self.csv)
+        os.utime(self.plot, (t + 10, t + 10))
+        self.assertEqual(self._run(classes=["a"]).call_count, 1)
+
+    def test_plots_when_missing(self):
+        self.assertEqual(self._run().call_count, 1)
+
+    def test_skips_when_plot_newer(self):
+        self._run()
+        t = os.path.getmtime(self.csv)
+        os.utime(self.plot, (t + 10, t + 10))
+        self.assertEqual(self._run().call_count, 0)
+
+    def test_replots_when_csv_newer(self):
+        self._run()
+        t = os.path.getmtime(self.plot)
+        os.utime(self.csv, (t + 10, t + 10))
+        self.assertEqual(self._run().call_count, 1)
+
+
+class LabelsTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.dataset = mock.MagicMock()
+        self.dataset.paths = ["/a/x_1.mrc", "/a/y_2.mrc", "/a/x_3.mrc"]
+
+    def test_plain_dataset(self):
+        self.assertEqual(_labels(self.dataset), ["x", "y", "x"])
+        self.dataset.read.assert_not_called()
+        self.dataset.__getitem__.assert_not_called()
+
+    def test_subset(self):
+        subset = torch.utils.data.Subset(self.dataset, [2, 1])
+        self.assertEqual(_labels(subset), ["x", "y"])
+        self.dataset.read.assert_not_called()
+        self.dataset.__getitem__.assert_not_called()
