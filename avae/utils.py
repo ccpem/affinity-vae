@@ -9,7 +9,6 @@ import numpy as np
 import numpy.typing as npt
 import sklearn.linear_model
 import sklearn.metrics
-import sklearn.metrics.pairwise
 import torch
 
 
@@ -232,34 +231,48 @@ def latent_space_similarity_mat(
     display: bool
         When this variable is set to true, the function only dispalys the plot and doesnt save it.
     """
-    # get same label order as affinity matrix
-    cosine_sim_matrix = sklearn.metrics.pairwise.cosine_similarity(
-        latent_space
-    )
+    # The cosine similarity of two vectors is the dot product of their unit
+    # length versions: cos(a, b) = u_a . u_b, with u = x / |x|. Averaging it
+    # over all pairs of two classes therefore reduces to dot products of
+    # per-class sums of unit vectors, so the N x N similarity matrix never
+    # needs to be built:
+    #   mean_ij = (S_i . S_j) / (n_i n_j),        S_c = sum of u over class c
+    # For the std, the squared similarity (u_a . u_b)^2 equals the Frobenius
+    # product <u_a u_a^T, u_b u_b^T>_F, so the mean squared similarity is
+    #   E_ij[s^2] = <M_i, M_j>_F / (n_i n_j),    M_c = sum of u u^T in class c
+    # and std_ij = sqrt(E_ij[s^2] - mean_ij^2).
+    # Self-pairs are included on the diagonal, as in the full pairwise version.
+    latent_space = np.asarray(latent_space, dtype=np.float64)
+    class_labels = np.asarray(class_labels)
+    # unit length latent vectors; zero vectors stay zero (similarity 0)
+    norms = np.linalg.norm(latent_space, axis=1, keepdims=True)
+    unit = latent_space / np.where(norms == 0, 1.0, norms)
+
+    latent_dims = unit.shape[1]
+    counts = np.zeros(num_classes)
+    sums = np.zeros((num_classes, latent_dims))
+    outer_sums = np.zeros((num_classes, latent_dims * latent_dims))
+    for i in range(num_classes):
+        class_unit = unit[class_labels == unique_classes[i]]
+        counts[i] = len(class_unit)
+        sums[i] = class_unit.sum(axis=0)
+        if plot_mode == "std":
+            outer_sums[i] = (class_unit.T @ class_unit).ravel()
+
+    pair_counts = np.outer(counts, counts)
+    has_pairs = pair_counts > 0
+    safe_pair_counts = np.where(has_pairs, pair_counts, 1.0)
+    mean_sim = (sums @ sums.T) / safe_pair_counts
 
     cosine_sim_mat = np.zeros((num_classes, num_classes))
-
-    for i in range(num_classes):
-        for j in range(i, num_classes):
-            class_i_indices = np.where(class_labels == unique_classes[i])[0]
-            class_j_indices = np.where(class_labels == unique_classes[j])[0]
-            cosine_sims = cosine_sim_matrix[class_i_indices][
-                :, class_j_indices
-            ]
-            if cosine_sims.size == 0:
-                cosine_sim_mat[i, j] = 0.0
-                cosine_sim_mat[j, i] = 0.0
-                continue
-            if plot_mode == "mean":
-                cosine_sim_mat[i, j] = np.mean(cosine_sims)
-                cosine_sim_mat[j, i] = cosine_sim_mat[
-                    i, j
-                ]  # symmetrical matrix
-            if plot_mode == "std":
-                cosine_sim_mat[i, j] = np.std(cosine_sims)
-                cosine_sim_mat[j, i] = cosine_sim_mat[
-                    i, j
-                ]  # symmetrical matrix
+    if plot_mode == "mean":
+        cosine_sim_mat = mean_sim
+    elif plot_mode == "std":
+        second_moment = (outer_sums @ outer_sums.T) / safe_pair_counts
+        cosine_sim_mat = np.sqrt(
+            np.clip(second_moment - mean_sim**2, 0, None)
+        )
+    cosine_sim_mat[~has_pairs] = 0.0
 
     return cosine_sim_mat
 
