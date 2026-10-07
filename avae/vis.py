@@ -151,6 +151,12 @@ def _class_plot_scale(
     return resolved_fig_size, font_size, title_size
 
 
+@functools.lru_cache(maxsize=None)
+def _affinity_classes(path: str) -> tuple:
+    """Read only the header of the affinity CSV (cached per path)."""
+    return tuple(pd.read_csv(path, nrows=0).columns.astype(str).tolist())
+
+
 def _loss_curve_figure(
     epochs: int,
     series: typing.Sequence[tuple[str | None, npt.ArrayLike, str | None, str]],
@@ -942,8 +948,8 @@ def latent_embed_plot_tsne(
 
     if xs.shape[-1] != 1:
 
-        for mol_id, mol in enumerate(set(ys.tolist())):
-            idx = np.where(np.array(ys.tolist()) == mol)[0]
+        for mol in np.unique(ys):
+            idx = ys == mol
 
             color = colours[classes.index(mol)]
 
@@ -962,8 +968,8 @@ def latent_embed_plot_tsne(
 
     if xs.shape[-1] == 1:
 
-        for mol_id, mol in enumerate(set(ys.tolist())):
-            idx = np.where(np.array(ys.tolist()) == mol)[0]
+        for mol in np.unique(ys):
+            idx = ys == mol
             cols = colours[classes.index(mol)]
             ax.hist(
                 lats[idx],
@@ -1202,7 +1208,9 @@ def confidence_plot(x, y, s, suffix=None, vis_format="png", vis_print=False):
         "################################################################",
     )
     logging.info(
-        "Visualising class-average confidence metrics " + suffix + "...\n",
+        "Visualising class-average confidence metrics"
+        + (f" {suffix}" if suffix is not None else "")
+        + "...\n",
     )
     cmap = plt.get_cmap("jet")
     cols = [cmap(i) for i in np.linspace(0, 1, len(x[0]))]
@@ -1297,9 +1305,7 @@ def latent_space_similarity_plot(
     if affinity_matrix is None:
         unique_classes: npt.NDArray | list = np.unique(class_labels)
     else:
-        classes_order = (
-            pd.read_csv(affinity_matrix, header=0).columns.astype(str).tolist()
-        )
+        classes_order = list(_affinity_classes(str(affinity_matrix)))
         unique_classes_in_data = np.unique(class_labels)
         if np.setdiff1d(unique_classes_in_data, classes_order).size > 0:
             unique_classes = np.concatenate(
@@ -1384,6 +1390,12 @@ def latent_4enc_interpolate_plot(
 
     padding = 0
     classes = np.unique(np.asarray(ys))
+    if len(classes) <= 3:
+        logging.warning(
+            "\n\nWARNING: Interpolation plot needs at least 4 distinct classes, "
+            "cannot visualise interpolations. Exiting.\n",
+        )
+        return
     latent_dim = xs.shape[1]
 
     # Number of plots (each have 4 random corners)
@@ -1548,7 +1560,6 @@ def pose_class_disentanglement_plot(
     vis_format: str = "png",
     vis_print: bool = False,
 ):
-
     """Visualise Pose interpolation per class. This function creates a pose interpolatoion
     plot for all classes listed in pose_vis_class.
 
@@ -1590,9 +1601,9 @@ def pose_class_disentanglement_plot(
         logging.warning(
             "Pose interpolation cannot be done if pose dimension is not specified"
         )
+        return
 
     padding = 0
-    data_dim = len(dsize)
     x = np.asarray(x)
 
     poses_space = np.asarray(poses)
@@ -1600,7 +1611,6 @@ def pose_class_disentanglement_plot(
     pose_vis_class_list = pose_vis_class.replace(" ", "").split(",")
 
     for i in pose_vis_class_list:
-        decoded_grid = []
         class_x = np.take(x, np.where(np.array(y) == i)[0], axis=0)
         class_x_indx = np.random.choice(class_x.shape[0])
         enc = class_x[class_x_indx, :]
@@ -1683,7 +1693,6 @@ def pose_disentanglement_plot(
 
     number_of_samples = 7
     padding = 0
-    data_dim = len(dsize)
     latents = np.asarray(lats)
     poses_space = np.asarray(poses)
 
