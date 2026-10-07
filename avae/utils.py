@@ -1,4 +1,3 @@
-import copy
 import logging
 import os.path
 import pathlib
@@ -190,7 +189,6 @@ def pose_interpolation(
     vae: torch.nn.Module,
     device: torch.device,
 ) -> npt.NDArray:
-
     """This function:
     1-  interpolates within each pose channels
         for the number_of_samples requested.
@@ -216,24 +214,27 @@ def pose_interpolation(
     device: torch.device
         Device to run the model on.
     """
-    decoded_grid = []
-    # Generate vectors representing single transversals along each lat_dim
-    for p_dim in range(pos_dims):
-        for grid_spot in range(number_of_samples):
-            means = copy.deepcopy(pose_mean)
-            means[p_dim] += pose_std[p_dim] * (-1.2 + 0.4 * grid_spot)
+    # Single transversals along each pose channel, row-major: p_dim, grid_spot
+    steps = -1.2 + 0.4 * np.arange(number_of_samples)
+    pose_mean = np.asarray(pose_mean)
+    means = np.tile(pose_mean, (pos_dims, number_of_samples, 1))
+    means[
+        np.arange(pos_dims)[:, None],
+        np.arange(number_of_samples)[None, :],
+        np.arange(pos_dims)[:, None],
+    ] += (np.asarray(pose_std)[:, None] * steps[None, :]).astype(means.dtype)
+    means = means.reshape(-1, means.shape[-1])
 
-            pos = torch.from_numpy(np.array(means)).unsqueeze(0).to(device)
-            lat = torch.from_numpy(np.array(enc)).unsqueeze(0).to(device)
+    n = means.shape[0]
+    pos = torch.from_numpy(means).to(device)
+    lat = torch.from_numpy(np.array(enc)).unsqueeze(0).expand(n, -1).to(device)
 
-            # Decode interpolated vectors
-            with torch.no_grad():
-                decoded_img = vae.decoder(lat, pos)
-
-            decoded_grid.append(decoded_img.cpu().squeeze().numpy())
+    # Decode all interpolated vectors in a single batched call
+    with torch.no_grad():
+        decoded_img = vae.decoder(lat, pos)
 
     decoded_grid = np.reshape(
-        np.array(decoded_grid), (pos_dims, number_of_samples, *dsize)
+        decoded_img.cpu().numpy(), (pos_dims, number_of_samples, *dsize)
     )
 
     return decoded_grid

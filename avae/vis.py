@@ -1,4 +1,3 @@
-import copy
 import functools
 import logging
 import os.path
@@ -1384,7 +1383,6 @@ def latent_4enc_interpolate_plot(
     )
 
     padding = 0
-    data_dim = len(dsize)
     classes = np.unique(np.asarray(ys))
     latent_dim = xs.shape[1]
 
@@ -1409,34 +1407,34 @@ def latent_4enc_interpolate_plot(
             )
             enc.append(lat)
 
-        enc = np.asarray(enc)
-        alpha_values = torch.linspace(0, 1, num_steps)
-        beta_values = torch.linspace(0, 1, num_steps)
-        decoded_grid = []
+        enc_t = torch.as_tensor(
+            np.asarray(enc, dtype=np.float32).reshape(4, latent_dim)
+        )
+        h = torch.linspace(0, 1, num_steps)[:, None, None]
+        v = torch.linspace(0, 1, num_steps)[None, :, None]
 
-        for h in alpha_values:
-            for v in beta_values:
+        # bilinear interpolation in the latent space, all cells at once
+        z_batch = (
+            (1 - h) * (1 - v) * enc_t[0]
+            + h * (1 - v) * enc_t[1]
+            + (1 - h) * v * enc_t[2]
+            + h * v * enc_t[3]
+        ).reshape(-1, latent_dim)
+        z_batch = z_batch.to(device=device, dtype=torch.float32)
 
-                # bilinear interpolation in the latent space
-                interpolated_z = (
-                    (1 - h) * (1 - v) * enc[0]
-                    + h * (1 - v) * enc[1]
-                    + (1 - h) * v * enc[2]
-                    + h * v * enc[3]
-                )
+        pose_batch = None
+        if poses is not None:
+            pose_batch = (
+                torch.zeros(num_steps * num_steps, poses[0].shape[0])
+                + pose_mean
+            ).to(device=device, dtype=torch.float32)
 
-                # Decode the interpolated encoding to generate an image
-                with torch.no_grad():
-                    decoded_images = vae.decoder(
-                        interpolated_z.view(-1, latent_dim).to(device=device),
-                        (torch.zeros(1, poses[0].shape[0]) + pose_mean).to(
-                            device=device
-                        ),
-                    )
-                decoded_grid.append(decoded_images.cpu().squeeze().numpy())
+        # Decode all interpolated encodings in a single call
+        with torch.no_grad():
+            decoded_images = vae.decoder(z_batch, pose_batch)
 
         decoded_grid = np.reshape(
-            np.array(decoded_grid), (num_steps, num_steps, *dsize)
+            decoded_images.cpu().numpy(), (num_steps, num_steps, *dsize)
         )
 
         _save_grid_figure(
@@ -1487,7 +1485,6 @@ def latent_disentamglement_plot(
     logging.info("Visualising latent content disentanglement ...\n")
     number_of_samples = 7
     padding = 0
-    data_dim = len(dsize)
     latents = np.asarray(lats)
     if poses is not None:
         poses_space = np.asarray(poses)
@@ -1500,37 +1497,28 @@ def latent_disentamglement_plot(
         pos_means = np.mean(poses_space, axis=0)
         pos_dims = poses_space.shape[-1]
 
-    recon_images = []
+    # Single traversals along each latent dim, every 0.4 sigma from -1.2 to 1.2
+    steps = -1.2 + 0.4 * np.arange(number_of_samples)
+    z_np = np.tile(lat_means, (latent_dims, number_of_samples, 1))
+    idx = np.arange(latent_dims)
+    z_np[idx, :, idx] += lat_stds[:, None] * steps[None, :]
+    z_batch = torch.from_numpy(
+        z_np.reshape(-1, latent_dims).astype(np.float32)
+    ).to(device)
 
-    # Generate vectors representing single transversals along each latent_dims
-    for l_dim in range(latent_dims):
-        for grid_spot in range(number_of_samples):
-            means = copy.deepcopy(lat_means)
-            # every 0.4 interval from -1.2 to 1.2 sigma
-            means[l_dim] += lat_stds[l_dim] * (-1.2 + 0.4 * grid_spot)
+    pose_batch = None
+    if poses is not None:
+        pose_batch = torch.from_numpy(
+            np.tile(pos_means, (latent_dims * number_of_samples, 1)).astype(
+                np.float32
+            )
+        ).to(device)
 
-            # Decode the current vector
-            with torch.no_grad():
-                current_lat_grid = torch.from_numpy(np.array([means])).to(
-                    device
-                )
+    with torch.no_grad():
+        recon = vae.decoder(z_batch, pose_batch)
 
-                if poses is not None:
-                    current_pos_grid = torch.from_numpy(
-                        np.array([pos_means])
-                    ).to(device)
-                    current_recon = vae.decoder(
-                        current_lat_grid, current_pos_grid
-                    )
-                else:
-                    current_recon = vae.decoder(current_lat_grid, None)
-
-            recon_images.append(current_recon.cpu().squeeze().numpy())
-
-    # Combine the individual decoded images into a single array
-    recon_images = np.array(recon_images)
     recon_images = np.reshape(
-        recon_images, (latent_dims, number_of_samples, *dsize)
+        recon.cpu().numpy(), (latent_dims, number_of_samples, *dsize)
     )
 
     _save_grid_figure(
@@ -1763,7 +1751,6 @@ def interpolations_plot(
         "################################################################",
     )
     logging.info("Visualising interpolations ...\n")
-    data_dim = len(dsize)
     lats = np.asarray(lats)
     classes = np.asarray(classes)
 
@@ -1805,47 +1792,37 @@ def interpolations_plot(
     grid_size = 6
     alpha_values = np.linspace(0.0, 1.0, grid_size, dtype=np.float32)
     beta_values = np.linspace(0.0, 1.0, grid_size, dtype=np.float32)
-    decoded_grid = []
-    for i, h in enumerate(alpha_values):
-        for j, v in enumerate(beta_values):
+    h = alpha_values[:, None, None]
+    v = beta_values[None, :, None]
+    w = (
+        (1 - h) * (1 - v),
+        h * (1 - v),
+        (1 - h) * v,
+        h * v,
+    )
 
-            # bilinear interpolation in the latent space
-            interpolated_z = (
-                (1 - h) * (1 - v) * class_rep_lats[0]
-                + h * (1 - v) * class_rep_lats[1]
-                + (1 - h) * v * class_rep_lats[2]
-                + h * v * class_rep_lats[3]
-            )
-            interpolated_z_t = torch.from_numpy(
-                np.asarray(interpolated_z, dtype=np.float32)
-            ).view(-1, latent_dim)
+    # bilinear interpolation in the latent space, all grid cells at once
+    reps_z = np.asarray(class_rep_lats, dtype=np.float32)
+    z_batch = sum(w[k] * reps_z[k] for k in range(4)).reshape(-1, latent_dim)
+    z_batch = torch.from_numpy(np.asarray(z_batch, dtype=np.float32)).to(
+        device=device
+    )
 
-            if poses is not None:
-                interpolated_pose = (
-                    (1 - h) * (1 - v) * class_rep_poses[0]
-                    + h * (1 - v) * class_rep_poses[1]
-                    + (1 - h) * v * class_rep_poses[2]
-                    + h * v * class_rep_poses[3]
-                )
-                interpolated_pose_t = torch.from_numpy(
-                    np.asarray(interpolated_pose, dtype=np.float32)
-                ).view(-1, poses_dim)
-            with torch.no_grad():
-                if poses is not None:
-                    decoded_images = vae.decoder(
-                        interpolated_z_t.to(device=device),
-                        interpolated_pose_t.to(device=device),
-                    )
-                else:
-                    decoded_images = vae.decoder(
-                        interpolated_z_t.to(device=device),
-                        None,
-                    )
+    pose_batch = None
+    if poses is not None:
+        reps_p = np.asarray(class_rep_poses, dtype=np.float32)
+        p_batch = sum(w[k] * reps_p[k] for k in range(4)).reshape(
+            -1, poses_dim
+        )
+        pose_batch = torch.from_numpy(
+            np.asarray(p_batch, dtype=np.float32)
+        ).to(device=device)
 
-            decoded_grid.append(decoded_images.cpu().squeeze().numpy())
+    with torch.no_grad():
+        decoded_images = vae.decoder(z_batch, pose_batch)
 
     decoded_grid = np.reshape(
-        np.array(decoded_grid), (grid_size, grid_size, *dsize)
+        decoded_images.cpu().numpy(), (grid_size, grid_size, *dsize)
     )
 
     _save_grid_figure(
