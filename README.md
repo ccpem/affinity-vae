@@ -216,8 +216,8 @@ Options:
                                   per run).
   -similarity, --vis_sim          Visualise train-val model similarity matrix.
   -va, --vis_all                  Visualise all above.
-  -vf, --vis_format TEXT          The format of saved images. Options: png ,
-                                  pdf
+  -vf, --vis_format TEXT          The format of saved images. Options: png,
+                                  pdf, svg
   -fev, --freq_eval INTEGER       Frequency at which to evaluate test set.
   -fs, --freq_sta INTEGER         Frequency at which to save state
   -fac, --freq_acc INTEGER        Frequency at which to visualise confusion
@@ -246,8 +246,6 @@ Options:
                                   and the maximum to one
   -res, --rescale INTEGER         Rescale images to given value (tuple, one
                                   value per dim).
-  -tb, --tensorboard              Log metrics and figures to tensorboard
-                                  during training
   -st, --strategy TEXT            Define the strategy for distributed
                                   training. Options are: 'ddp', 'deepspeed' or
                                   'fsdp

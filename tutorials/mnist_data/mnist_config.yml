@@ -60,7 +60,6 @@ restart: false
 
 #### Visualization parameters
 vis_format: png
-tensorboard: false
 vis_his: false
 vis_aff: false
 vis_cyc: false

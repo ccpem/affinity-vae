@@ -34,6 +34,7 @@ def load_data(
     vis_his: bool = False,
     vis_aff: bool = False,
     vis_format: str = "png",
+    vis_print: bool = False,
 ) -> tuple[torch.utils.data.DataLoader, int]:
     ...
 
@@ -57,6 +58,7 @@ def load_data(
     vis_his: bool = False,
     vis_aff: bool = False,
     vis_format: str = "png",
+    vis_print: bool = False,
 ) -> tuple[
     torch.utils.data.DataLoader,
     torch.utils.data.DataLoader,
@@ -85,13 +87,17 @@ def load_data(
     vis_his: bool = False,
     vis_aff: bool = False,
     vis_format: str = "png",
-) -> tuple[
-    torch.utils.data.DataLoader,
-    torch.utils.data.DataLoader,
-    torch.utils.data.DataLoader,
-    pd.DataFrame,
-    int,
-] | tuple[torch.utils.data.DataLoader, int]:
+    vis_print: bool = False,
+) -> (
+    tuple[
+        torch.utils.data.DataLoader,
+        torch.utils.data.DataLoader,
+        torch.utils.data.DataLoader,
+        pd.DataFrame,
+        int,
+    ]
+    | tuple[torch.utils.data.DataLoader, int]
+):
     """This function a wrapper around the DiskDataLoader class from the caked library. It loads data from a given path, selects a subset of classes if requested, splits it into train / val and test in batch sets, and loads an affinity matrix.
     The function is overloaded to return different types of data depending on the value of the eval parameter. If eval is True, the function returns only the test data and the dimension of the data. If eval is False, the function returns train, validation, and test data, the affinity matrix, and the dimension of the data.
 
@@ -188,6 +194,7 @@ def load_data(
                 classes_list,
                 vis_aff=vis_aff and fabric.global_rank == 0,
                 vis_format=vis_format,
+                vis_print=vis_print,
             )
 
         # assign the affinity matrix to the dataset (small modification from the caked DiskDataset, which only returns data and labels, and we need the affinity matrix indexes for training).
@@ -204,9 +211,17 @@ def load_data(
         if vis_his and fabric.global_rank == 0:
             train_y = list(sum([y[1] for _, y in enumerate(trains)], ()))
             val_y = list(sum([y[1] for _, y in enumerate(vals)], ()))
-            plot_classes_distribution(train_y, "train", vis_format=vis_format)
             plot_classes_distribution(
-                val_y, "validation", vis_format=vis_format
+                train_y,
+                "train",
+                vis_format=vis_format,
+                vis_print=vis_print,
+            )
+            plot_classes_distribution(
+                val_y,
+                "validation",
+                vis_format=vis_format,
+                vis_print=vis_print,
             )
 
         train_size = len(trains.dataset)
@@ -253,7 +268,10 @@ def load_data(
         if vis_his and fabric.global_rank == 0:
             eval_y = list(sum([y[1] for _, y in enumerate(tests)], ()))
             plot_classes_distribution(
-                eval_y, "evaluation", vis_format=vis_format
+                eval_y,
+                "evaluation",
+                vis_format=vis_format,
+                vis_print=vis_print,
             )
 
         tests = fabric.setup_dataloaders(tests)
@@ -278,6 +296,7 @@ def get_affinity_matrix(
     classes: list = [],
     vis_aff: bool = False,
     vis_format: str = "png",
+    vis_print: bool = False,
 ) -> pd.DataFrame:
     """Loads affinity matrix from a given path, subsets it given selected classes and returns it as a pandas DataFrame.
 
@@ -314,6 +333,7 @@ def get_affinity_matrix(
                 all_classes=affinity.columns.tolist(),
                 selected_classes=classes,
                 vis_format=vis_format,
+                vis_print=vis_print,
             )
 
         # subset affinity matrix with only the relevant classes
@@ -327,7 +347,6 @@ def get_affinity_matrix(
 
 
 class AffinityDiskDataset(caked.dataloader.DiskDataset):
-
     """Modified version of the caked DiskDataset to include the affinity matrix and data metadata that is needed for the
     affinity pipeline"""
 

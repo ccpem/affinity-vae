@@ -177,9 +177,18 @@ class AffinityConfig(pydantic.BaseModel):
     #### Visualisation parameters
     # setup params
     vis_format: None | str = pydantic.Field(
-        "png", description="The format of saved images. Options: png , pdf"
+        "png",
+        description="The format of saved images. Options: png, pdf, svg "
+        "(vector formats stay sharp at any size and are fastest for "
+        "large matrices)",
     )
-    tensorboard: bool = pydantic.Field(False, description="Use tensorboard")
+    vis_print: bool = pydantic.Field(
+        False,
+        description="Render matrix visualisations (confusion, affinity, "
+        "similarity) at print quality (300dpi) instead of the faster "
+        "default resolution. The dpi setting does not apply to vector "
+        "vis_format (pdf, svg)",
+    )
     vis_his: bool = pydantic.Field(
         False, description="Visualise class distribution histogram"
     )
@@ -384,6 +393,7 @@ def load_config_params(
             if key in [
                 'vis_all',
                 'vis_format',
+                'vis_print',
                 'vis_z_n_int',
                 'vis_pose_class',
             ]:

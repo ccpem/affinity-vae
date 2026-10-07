@@ -1,7 +1,6 @@
 import copy
 import logging
 import os.path
-import typing
 
 import matplotlib.pyplot as plt
 import mrcfile
@@ -88,10 +87,8 @@ def save_imshow_png(
     cmap: str | None = None,
     min: float | None = None,
     max: float | None = None,
-    writer: typing.Any = None,
-    figname: str | None = None,
-    epoch: int = 0,
     display: bool = False,
+    vis_print: bool = False,
 ) -> None:
     if not display:
         if not os.path.exists("plots"):
@@ -106,10 +103,12 @@ def save_imshow_png(
         ax.imshow(array, cmap=cmap, vmin=min, vmax=max)  # channels last
         ax.axis("off")
         fig.subplots_adjust(left=0, right=1, bottom=0, top=1)
-        fig.savefig("plots/" + fname, bbox_inches="tight", pad_inches=0)
-
-        if writer:
-            writer.add_figure(figname, fig, epoch)
+        fig.savefig(
+            "plots/" + fname,
+            **({"dpi": 300} if vis_print else {}),
+            bbox_inches="tight",
+            pad_inches=0,
+        )
     else:
         plt.imshow(array, cmap=cmap, vmin=min, vmax=max)  # channels last
         plt.show()

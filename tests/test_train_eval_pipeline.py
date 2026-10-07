@@ -41,7 +41,6 @@ def pipeline_params(datapath):
         "normalise": True,
         "shift_min": True,
         "rescale": 32,
-        "tensorboard": False,
         "classifier": "NN",
         "opt_method": "adam",
         "gpu_devices": "0",
