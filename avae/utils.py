@@ -1,6 +1,7 @@
 import copy
 import logging
 import os.path
+import pathlib
 
 import matplotlib.pyplot as plt
 import mrcfile
@@ -9,6 +10,9 @@ import numpy.typing as npt
 import sklearn.linear_model
 import sklearn.metrics
 import torch
+
+SCREEN_HEIGHT_PX = 720  # top half of a 1440p screen
+VECTOR_FORMATS = ("pdf", "svg", "eps")
 
 
 def as_list(value: object) -> list:
@@ -81,6 +85,40 @@ def fill_grid_for_plottting(
     return grid
 
 
+def save_figure(
+    fig: plt.Figure,
+    path: str,
+    vis_format: str,
+    vis_print: bool = False,
+    display: bool = False,
+    cap_height: bool = True,
+) -> None:
+    """Save (or, with `display`, only show) a figure and close it.
+
+    Vector formats take no dpi. `vis_print` saves at 300 dpi and full size.
+    Otherwise, with `cap_height`, the dpi is lowered so the figure is at most
+    SCREEN_HEIGHT_PX tall, as large figures cost time and space to rasterise.
+    """
+    if display:
+        plt.show()
+        plt.close(fig)
+        return
+
+    pathlib.Path(path).parent.mkdir(parents=True, exist_ok=True)
+    kwargs: dict = {}
+    if vis_format not in VECTOR_FORMATS:
+        dpi = plt.rcParams["figure.dpi"]
+        if vis_print:
+            dpi = 300
+        elif cap_height:
+            dpi = min(dpi, SCREEN_HEIGHT_PX / fig.get_figheight())
+        kwargs["dpi"] = dpi
+    if vis_format == "png":
+        kwargs["pil_kwargs"] = {"compress_level": 3}
+    fig.savefig(path, **kwargs)
+    plt.close(fig)
+
+
 def save_imshow_png(
     fname: str,
     array: npt.NDArray,
@@ -90,30 +128,23 @@ def save_imshow_png(
     display: bool = False,
     vis_print: bool = False,
 ) -> None:
-    if not display:
-        if not os.path.exists("plots"):
-            os.mkdir("plots")
-
-        height, width = array.shape[:2]
-        if width >= height:
-            image_figure_size = (10, 10 * height / width)
-        else:
-            image_figure_size = (10 * width / height, 10)
-        fig, ax = plt.subplots(figsize=image_figure_size)
-        ax.imshow(array, cmap=cmap, vmin=min, vmax=max)  # channels last
-        ax.axis("off")
-        fig.subplots_adjust(left=0, right=1, bottom=0, top=1)
-        fig.savefig(
-            "plots/" + fname,
-            **({"dpi": 300} if vis_print else {}),
-            bbox_inches="tight",
-            pad_inches=0,
-        )
+    height, width = array.shape[:2]
+    if width >= height:
+        image_figure_size = (10, 10 * height / width)
     else:
-        plt.imshow(array, cmap=cmap, vmin=min, vmax=max)  # channels last
-        plt.show()
-
-    plt.close()
+        image_figure_size = (10 * width / height, 10)
+    fig, ax = plt.subplots(figsize=image_figure_size)
+    ax.imshow(array, cmap=cmap, vmin=min, vmax=max)  # channels last
+    ax.axis("off")
+    fig.subplots_adjust(left=0, right=1, bottom=0, top=1)
+    save_figure(
+        fig,
+        "plots/" + fname,
+        fname.rsplit(".", 1)[-1],
+        vis_print,
+        display,
+        cap_height=False,
+    )
 
 
 def save_mrc_file(fname: str, array: npt.NDArray) -> None:

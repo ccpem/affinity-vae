@@ -1,8 +1,10 @@
 import copy
+import functools
 import logging
 import os.path
 import pathlib
 import random
+import re
 import typing
 import warnings
 
@@ -20,21 +22,117 @@ import torchvision
 
 from . import utils_learning
 from .utils import (
+    VECTOR_FORMATS,
     colour_per_class,
     create_grid_for_plotting,
     fill_grid_for_plottting,
     latent_space_similarity_mat,
     pose_interpolation,
+    save_figure,
     save_imshow_png,
     save_mrc_file,
 )
 
 MAX_CLASS_FIG_SIZE = 20
-VECTOR_FORMATS = ("pdf", "svg", "eps")
+MAX_ANNOTATED_CLASSES = 25
+_PAD = 0.28  # outer padding in inches, equal on all four sides
+_STYLE: dict[str, typing.Any] = {
+    "font.weight": "normal",
+    "axes.titleweight": "normal",
+    "axes.labelweight": "normal",
+    "font.size": 14,
+    "axes.titlesize": 18,
+    "axes.labelsize": 16,
+    "xtick.labelsize": 14,
+    "ytick.labelsize": 14,
+    "legend.fontsize": 14,
+}
+
+
+def _styled(func):
+    """Run a plotting function under the shared matplotlib style."""
+
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        with plt.rc_context(_STYLE):
+            return func(*args, **kwargs)
+
+    return wrapper
+
+
+def _epoch_title(text: str, epoch: int, detail: str | None = None) -> str:
+    title = f"{text} at epoch {epoch + 1}"
+    return f"{title}: {detail}" if detail else title
+
+
+def _ytick_labels(ax) -> list[str]:
+    """The y tick labels the axis will show, available before rendering."""
+    axis = ax.yaxis
+    labels = axis.get_major_formatter().format_ticks(axis.get_majorticklocs())
+    # Strip mathtext markup (log axes) so only the visible glyphs are counted
+    return [re.sub(r"\\mathdefault|[${}\\^]", "", label) for label in labels]
+
+
+def _set_title(ax, text: str, size: float) -> None:
+    """Set the title, shrinking its font only if it would be wider than the
+    room left either side of the axes centre. Call after _fit_margins."""
+    centre = (ax.get_position().x0 + ax.get_position().x1) / 2
+    width_in = ax.figure.get_size_inches()[0]
+    available = 2 * (min(centre, 1 - centre) * width_in - _PAD)
+    width = 0.6 * len(text) * size / 72
+    ax.set_title(text, fontsize=size * min(1, available / width))
+
+
+def _margins(
+    font_size: float,
+    *,
+    title_size: float | None = None,
+    xlabels: typing.Sequence | npt.NDArray = (),
+    ylabels: typing.Sequence = (),
+    x_rotation: int = 0,
+    xlabel: bool = False,
+    ylabel: bool = False,
+    right: float = 0.0,
+) -> tuple[float, float, float, float]:
+    """Estimate the (left, right, bottom, top) margins in inches from text
+    extents. `right` is extra room for a colorbar's labels or an outside
+    legend."""
+    pad = _PAD
+    char = 0.65 * font_size / 72  # generous average glyph width in inches
+    line = 1.5 * font_size / 72
+
+    def longest(labels):
+        return max((len(str(label)) for label in labels), default=0)
+
+    tick_x = longest(xlabels) * char
+    if x_rotation == 90:
+        bottom = tick_x
+    elif x_rotation:
+        bottom = tick_x * np.sin(np.radians(x_rotation)) + line
+    else:
+        bottom = line
+    left = longest(ylabels) * char if len(ylabels) else 4 * char
+    bottom += pad + 0.1 + (line if xlabel else 0)
+    left += pad + 0.1 + (line if ylabel else 0)
+    top = pad + (1.5 * title_size / 72 if title_size else 0)
+    return left, pad + right, bottom, top
+
+
+def _fit_margins(fig, font_size: float, **kwargs) -> None:
+    """Set the subplot margins from estimated text extents, avoiding the
+    extra layout pass of tight_layout (see _margins for the arguments)."""
+    width, height = fig.get_size_inches()
+    left, right, bottom, top = _margins(font_size, **kwargs)
+    fig.subplots_adjust(
+        left=left / width,
+        right=1 - right / width,
+        bottom=bottom / height,
+        top=1 - top / height,
+    )
 
 
 def _class_plot_scale(
-    num_classes: int, fig_size: int | None = None
+    num_classes: int, fig_size: float | None = None
 ) -> tuple[float, int, int]:
     """Return consistent figure and font sizes for class-based plots.
 
@@ -50,7 +148,8 @@ def _class_plot_scale(
     )
     row_height_pt = 72 * resolved_fig_size / max(num_classes, 1)
     font_size = int(np.clip(0.7 * row_height_pt, 4, 14))
-    return resolved_fig_size, font_size, max(14, font_size + 6)
+    title_size = max(16, font_size + 6, round(1.5 * resolved_fig_size))
+    return resolved_fig_size, font_size, title_size
 
 
 def _loss_curve_figure(
@@ -80,60 +179,86 @@ def _loss_curve_figure(
             linewidth=linewidth,
         )
 
-    if title:
-        ax.set_title(title, fontsize=16, fontweight="normal")
-
     if log_scale:
         ax.set_yscale("log")
-    ax.set_ylabel(ylabel, fontsize=16)
-    ax.set_xlabel("Epochs", fontsize=16)
-    ax.tick_params(axis="both", labelsize=14)
+    ax.set_ylabel(ylabel)
+    ax.set_xlabel("Epochs")
     if legend:
-        ax.legend(fontsize=14)
+        ax.legend()
 
-    fig.tight_layout()
-    if not os.path.exists("plots"):
-        os.mkdir("plots")
-    fig.savefig(f"{path}.{vis_format}", **({"dpi": 300} if vis_print else {}))
-    plt.close(fig)
+    _fit_margins(
+        fig,
+        14,
+        title_size=_STYLE["axes.titlesize"] if title else None,
+        ylabels=_ytick_labels(ax),
+        xlabel=True,
+        ylabel=True,
+    )
+    if title:
+        _set_title(ax, title, _STYLE["axes.titlesize"])
+    save_figure(fig, f"{path}.{vis_format}", vis_format, vis_print)
 
 
 def _matrix_figure(
-    fig_size: float,
-    font_size: int,
-    title_font_size: int,
+    data: npt.NDArray,
+    class_labels: typing.Sequence | npt.NDArray,
     title: str,
     path: str,
     vis_format: str = "png",
     vis_print: bool = False,
-    print_dpi: int = 300,
     *,
-    data: npt.NDArray,
-    class_labels: typing.Sequence,
     cmap,
     vmin: float | None = None,
     vmax: float | None = None,
     values_format: str | None = None,
-    value_font_size: int | None = None,
     highlight: npt.NDArray | None = None,
     xlabel: str | None = None,
     ylabel: str | None = None,
+    fig_size: float | None = None,
     display: bool = False,
 ) -> None:
-    """Render and save (or display) one
-    class x class matrix figure: image, optional per-cell values (colour
-    picked for contrast against the cell, the way sklearn's
-    ConfusionMatrixDisplay does), optional red-highlighted tick labels,
-    colorbar, and title.
+    """Render and save (or display) one class x class matrix figure: image,
+    per-cell values when `values_format` is given and there are at most
+    MAX_ANNOTATED_CLASSES classes (colour picked for contrast against the
+    cell, as sklearn's ConfusionMatrixDisplay does), optional red-highlighted
+    tick labels, colorbar, and title. Sizes are derived from the class count.
     """
     data = np.asarray(data)
     num_classes = len(class_labels)
+    fig_size, font_size, title_font_size = _class_plot_scale(
+        num_classes, fig_size
+    )
     # Vector formats embed the matrix at its native class x class resolution
-    # ("none" skips resampling), so they stay sharp at any size and dpi has
-    # no effect on them.
+    # ("none" skips resampling), so they stay sharp at any size.
     is_vector = vis_format in VECTOR_FORMATS
 
-    fig, ax = plt.subplots(figsize=(fig_size, fig_size))
+    # Size the figure around a fig_size x fig_size image so the margins are
+    # even on all sides whatever the label lengths.
+    cbar_gap, cbar_width = 0.15, max(0.15, 0.04 * fig_size)
+    left, right, bottom, top = _margins(
+        font_size,
+        title_size=title_font_size,
+        xlabels=class_labels,
+        ylabels=class_labels,
+        x_rotation=90,
+        xlabel=bool(xlabel),
+        ylabel=bool(ylabel),
+        right=cbar_gap + cbar_width + 0.1 + 5 * 0.65 * font_size / 72,
+    )
+    top += 0.5 * font_size / 72  # room for the top colorbar tick label
+    width, height = left + fig_size + right, bottom + fig_size + top
+    fig = plt.figure(figsize=(width, height))
+    ax = fig.add_axes(
+        (left / width, bottom / height, fig_size / width, fig_size / height)
+    )
+    cax = fig.add_axes(
+        (
+            (left + fig_size + cbar_gap) / width,
+            bottom / height,
+            cbar_width / width,
+            fig_size / height,
+        )
+    )
     im = ax.imshow(
         data,
         interpolation="none" if is_vector else "nearest",
@@ -142,20 +267,19 @@ def _matrix_figure(
         vmax=vmax,
     )
 
-    if values_format is not None:
+    if values_format is not None and num_classes <= MAX_ANNOTATED_CLASSES:
         color_min, color_max = im.cmap(0.0), im.cmap(1.0)
         thresh = (data.max() + data.min()) / 2.0
         for i in range(num_classes):
             for j in range(num_classes):
-                color = color_max if data[i, j] < thresh else color_min
                 ax.text(
                     j,
                     i,
                     f"{data[i, j]:{values_format}}",
                     ha="center",
                     va="center",
-                    color=color,
-                    fontsize=value_font_size,
+                    color=color_max if data[i, j] < thresh else color_min,
+                    fontsize=min(font_size, 10),
                 )
 
     ax.set_xticks(np.arange(num_classes), labels=class_labels)
@@ -173,34 +297,98 @@ def _matrix_figure(
     ax.tick_params(axis="x", rotation=90, labelsize=font_size)
     ax.tick_params(axis="y", labelsize=font_size)
 
-    colorbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+    colorbar = fig.colorbar(im, cax=cax)
     colorbar.ax.tick_params(labelsize=font_size)
 
-    ax.set_title(title, fontsize=title_font_size, fontweight="normal")
     if xlabel:
         ax.set_xlabel(xlabel, fontsize=font_size)
     if ylabel:
         ax.set_ylabel(ylabel, fontsize=font_size)
 
-    fig.tight_layout()
+    _set_title(ax, title, title_font_size)
+    save_figure(fig, path, vis_format, vis_print, display)
 
-    if display:
-        plt.show()
-        return
 
-    if not os.path.exists("plots"):
-        os.mkdir("plots")
-    fig.savefig(
+def _similarity_figure(
+    data: npt.NDArray,
+    class_labels: typing.Sequence | npt.NDArray,
+    highlight: npt.NDArray,
+    title: str,
+    path: str,
+    vis_format: str,
+    vis_print: bool,
+    fig_size: float | None = None,
+    display: bool = False,
+) -> None:
+    """Class x class matrix in [-1, 1] (affinity or cosine similarity) with
+    the `highlight`ed classes' tick labels in red."""
+    _matrix_figure(
+        data,
+        class_labels,
+        title,
         path,
-        **({"dpi": print_dpi} if vis_print and not is_vector else {}),
-        **(
-            {"pil_kwargs": {"compress_level": 3}}
-            if vis_format == "png"
-            else {}
-        ),
+        vis_format,
+        vis_print,
+        cmap="RdBu",
+        vmin=-1,
+        vmax=1,
+        highlight=highlight,
+        fig_size=fig_size,
+        display=display,
     )
 
-    plt.close(fig)
+
+def _confusion_figure(
+    y: npt.NDArray,
+    ypred: npt.NDArray,
+    labels: npt.NDArray,
+    stem: str,
+    epoch: int,
+    vis_format: str,
+    vis_print: bool,
+) -> None:
+    """Write the count and normalised (% of true class) confusion matrices
+    as `{stem}.csv` / `{stem}_norm.csv` and draw `{stem}_norm.{vis_format}`
+    titled with the balanced accuracy over classes that have samples."""
+    cm = sklearn.metrics.confusion_matrix(y, ypred, labels=labels)
+    support = cm.sum(axis=1)
+    supported = support > 0
+    if not np.all(supported):
+        logging.warning(
+            "Confusion matrix has no samples for classes %s. "
+            "Their normalised rows will be set to zero and excluded from "
+            "average per-class accuracy.",
+            labels[~supported],
+        )
+    cmn = (
+        np.divide(
+            cm.astype(float),
+            support[:, np.newaxis],
+            out=np.zeros(cm.shape),
+            where=supported[:, np.newaxis],
+        )
+        * 100
+    )
+    acc = np.mean(cmn.diagonal()[supported])
+
+    os.makedirs(os.path.dirname(stem), exist_ok=True)
+    pd.DataFrame(cm).to_csv(f"{stem}.csv", index=False)
+    pd.DataFrame(cmn).to_csv(f"{stem}_norm.csv", index=False)
+
+    _matrix_figure(
+        cmn,
+        labels,
+        _epoch_title("Balanced accuracy", epoch, f"{acc:.1f}%"),
+        f"{stem}_norm.{vis_format}",
+        vis_format,
+        vis_print,
+        cmap=plt.cm.Blues,
+        vmin=0,
+        vmax=100,
+        values_format=".0f",
+        xlabel="Predicted label (%)",
+        ylabel="True label (%)",
+    )
 
 
 def _save_grid_figure(
@@ -233,6 +421,7 @@ def _save_grid_figure(
         )
 
 
+@_styled
 def loss_plot(
     epochs: int,
     beta: float,
@@ -332,6 +521,7 @@ def loss_plot(
     )
 
 
+@_styled
 def plot_cyc_variable(
     array: list,
     variable_name: str,
@@ -364,6 +554,7 @@ def plot_cyc_variable(
     )
 
 
+@_styled
 def confusion_plot(
     y_train: npt.NDArray,
     ypred_train: npt.NDArray,
@@ -399,194 +590,23 @@ def confusion_plot(
     logging.info("Visualising accuracy: confusion and F1 scores ...\n")
 
     classes_list = np.unique(np.concatenate((y_train, ypred_train)))
-
-    fig_size, font_size, title_font_size = _class_plot_scale(len(classes_list))
-    value_font_size = min(font_size, 10)
-
-    # Compute confusion matrix
-    cm = sklearn.metrics.confusion_matrix(
-        y_train, ypred_train, labels=classes_list
+    classes_eval = np.unique(np.concatenate((y_val, ypred_val)))
+    # validation keeps the training class order, with unseen classes appended
+    ordered_class_eval = np.concatenate(
+        (classes_list, np.setdiff1d(classes_eval, classes_list))
     )
 
-    # Convert confusion matrix to a DataFrame to be saved as csv file
-    cm_df = pd.DataFrame(cm)
-
-    train_support = cm.sum(axis=1)
-    supported_train_classes = train_support > 0
-    avg_accuracy = np.divide(
-        cm.diagonal(),
-        train_support,
-        out=np.zeros_like(train_support, dtype=float),
-        where=supported_train_classes,
-    )
-
-    # Normalize confusion matrix
-    cmn = (
-        np.divide(
-            cm.astype(float),
-            train_support[:, np.newaxis],
-            out=np.zeros_like(cm, dtype=float),
-            where=supported_train_classes[:, np.newaxis],
-        )
-        * 100
-    )
-
-    # Convert normalised confusion matrix to a DataFrame to be saved as csv file
-    cmn_df = pd.DataFrame(cmn)
-
-    with plt.rc_context({"font.weight": "bold", "font.size": font_size}):
-        train_title = "Balanced accuracy at epoch {}: {:.1f}%".format(
-            epoch + 1, np.mean(avg_accuracy[supported_train_classes]) * 100
-        )
-
-        _matrix_figure(
-            fig_size,
-            font_size,
-            title_font_size,
-            train_title,
-            f"plots/confusion_train{mode}.{vis_format}",
-            vis_format,
-            vis_print,
-            data=cm,
-            class_labels=classes_list,
-            cmap=plt.cm.Blues,
-            values_format="d" if vis_print else None,
-            value_font_size=value_font_size,
-            xlabel="Predicted label",
-            ylabel="True label",
-        )
-
-        _matrix_figure(
-            fig_size,
-            font_size,
-            title_font_size,
-            train_title,
-            f"plots/confusion_train{mode}_norm.{vis_format}",
-            vis_format,
-            vis_print,
-            data=cmn,
-            class_labels=classes_list,
-            cmap=plt.cm.Blues,
-            vmin=0,
-            vmax=100,
-            values_format=".0f" if vis_print else None,
-            value_font_size=value_font_size,
-            xlabel="Predicted label (%)",
-            ylabel="True label (%)",
-        )
-
-        # Save confusion matrix DataFrame to CSV
-        cm_df.to_csv(f"plots/confusion_train{mode}.csv", index=False)
-
-        # Save normalised confusion matrix DataFrame to CSV
-        cmn_df.to_csv(f"plots/confusion_train{mode}_norm.csv", index=False)
-
-    classes_list_eval = np.unique(np.concatenate((y_val, ypred_val)))
-
-    if np.setdiff1d(classes_list_eval, classes_list).size > 0:
-        ordered_class_eval = np.concatenate(
-            (classes_list, np.setdiff1d(classes_list_eval, classes_list))
-        )
-    else:
-        ordered_class_eval = classes_list
-
-    cm_eval = sklearn.metrics.confusion_matrix(
-        y_val, ypred_val, labels=ordered_class_eval
-    )
-
-    # Convert confusion matrix to a DataFrame to be saved as csv file
-    cm_eval_df = pd.DataFrame(cm_eval)
-
-    eval_support = cm_eval.sum(axis=1)
-    supported_eval_classes = eval_support > 0
-    if not np.all(supported_eval_classes):
-        logging.warning(
-            "Validation confusion matrix has no samples for classes %s. "
-            "Their normalised rows will be set to zero and excluded from "
-            "average per-class accuracy.",
-            ordered_class_eval[~supported_eval_classes],
-        )
-    avg_accuracy_eval = np.divide(
-        cm_eval.diagonal(),
-        eval_support,
-        out=np.zeros_like(eval_support, dtype=float),
-        where=supported_eval_classes,
-    )
-
-    # Normalise the validation confusion matrix
-    cmn_eval = (
-        np.divide(
-            cm_eval.astype(float),
-            eval_support[:, np.newaxis],
-            out=np.zeros_like(cm_eval, dtype=float),
-            where=supported_eval_classes[:, np.newaxis],
-        )
-        * 100
-    )
-
-    # Convert confusion matrix to a DataFrame to be saved as csv file
-    cmn_eval_df = pd.DataFrame(cmn_eval)
-
-    # Save confusion matrix DataFrame to CSV
-    cm_eval_df.to_csv(f"plots/confusion_valid{mode}.csv", index=False)
-
-    # Save normalised confusion matrix DataFrame to CSV
-    cmn_eval_df.to_csv(f"plots/confusion_valid{mode}_norm.csv", index=False)
-
-    if mode == "_eval":
-        figure_name = "plots/confusion_eval"
-    elif mode == "":
-        figure_name = "plots/confusion_valid"
-    else:
-        figure_name = f"plots/confusion_{mode}"
-
-    with plt.rc_context(
-        {
-            "font.weight": "bold",
-            "font.size": font_size,
-        }
+    valid_name = {"": "valid", "_eval": "eval"}.get(mode, mode)
+    for stem, y, ypred, labels in (
+        (f"confusion_train{mode}", y_train, ypred_train, classes_list),
+        (f"confusion_{valid_name}", y_val, ypred_val, ordered_class_eval),
     ):
-        eval_title = "Balanced accuracy at epoch {}: {:.1f}%".format(
-            epoch + 1, np.mean(avg_accuracy_eval[supported_eval_classes]) * 100
-        )
-
-        _matrix_figure(
-            fig_size,
-            font_size,
-            title_font_size,
-            eval_title,
-            figure_name + f".{vis_format}",
-            vis_format,
-            vis_print,
-            data=cm_eval,
-            class_labels=ordered_class_eval,
-            cmap=plt.cm.Blues,
-            values_format="d" if vis_print else None,
-            value_font_size=value_font_size,
-            xlabel="Predicted label",
-            ylabel="True label",
-        )
-
-        _matrix_figure(
-            fig_size,
-            font_size,
-            title_font_size,
-            eval_title,
-            f"{figure_name}_norm.{vis_format}",
-            vis_format,
-            vis_print,
-            data=cmn_eval,
-            class_labels=ordered_class_eval,
-            cmap=plt.cm.Blues,
-            vmin=0,
-            vmax=100,
-            values_format=".0f" if vis_print else None,
-            value_font_size=value_font_size,
-            xlabel="Predicted label (%)",
-            ylabel="True label (%)",
+        _confusion_figure(
+            y, ypred, labels, f"plots/{stem}", epoch, vis_format, vis_print
         )
 
 
+@_styled
 def f1_plot(
     y_train: npt.NDArray,
     ypred_train: npt.NDArray,
@@ -678,45 +698,30 @@ def f1_plot(
     else:
         valid_df.to_csv(f1_valid_file, index=False)
 
-    with plt.rc_context(
-        {
-            "font.weight": "bold",
-            "font.size": font_size,
-        }
-    ):
-        fig, ax = plt.subplots(figsize=(fig_size, fig_size))
-        line_width = max(1.5, font_size / 6)
-        plt.plot(
-            classes_list,
-            train_f1_score,
-            label="train",
-            marker="o",
-            linewidth=line_width,
+    fig, ax = plt.subplots(figsize=(fig_size, fig_size))
+    line_width = max(1.5, font_size / 6)
+    for name, scores in (("train", train_f1_score), (label, valid_f1_score)):
+        ax.plot(
+            classes_list, scores, label=name, marker="o", linewidth=line_width
         )
-        plt.plot(
-            classes_list,
-            valid_f1_score,
-            label=label,
-            marker="o",
-            linewidth=line_width,
-        )
-        plt.xticks(rotation=45)
-        plt.legend(loc="lower left")
-        plt.title(
-            "F1 Score at epoch {}".format(epoch + 1),
-            fontsize=title_font_size,
-            fontweight="normal",
-        )
-        plt.ylabel("F1 Score")
-        plt.tight_layout()
-        plt.savefig(
-            f"plots/f1{mode}.{vis_format}",
-            **({"dpi": 300} if vis_print else {}),
-        )
-
-        plt.close()
+    ax.tick_params(axis="x", rotation=45, labelsize=font_size)
+    ax.tick_params(axis="y", labelsize=font_size)
+    ax.legend(loc="lower left", fontsize=font_size)
+    ax.set_ylabel("F1 Score", fontsize=font_size)
+    _fit_margins(
+        fig,
+        font_size,
+        title_size=title_font_size,
+        xlabels=classes_list,
+        ylabels=_ytick_labels(ax),
+        x_rotation=45,
+        ylabel=True,
+    )
+    _set_title(ax, _epoch_title("F1 Score", epoch), title_font_size)
+    save_figure(fig, f"plots/f1{mode}.{vis_format}", vis_format, vis_print)
 
 
+@_styled
 def recon_plot(
     img: torch.Tensor,
     rec: torch.Tensor,
@@ -844,6 +849,7 @@ def recon_plot(
         )
 
 
+@_styled
 def latent_embed_plot_tsne(
     xs: npt.NDArray,
     ys: npt.NDArray,
@@ -928,18 +934,11 @@ def latent_embed_plot_tsne(
     n_classes = len(classes)
     fig_size, font_size, title_font_size = _class_plot_scale(n_classes)
 
-    if n_classes < 3:
-        # If the number of classes are not moe than 3 the size of the figure would be too
-        # small and matplotlib would through a singularity error
-        fig, ax = plt.subplots(
-            figsize=(int(n_classes / 2) + 7, int(n_classes / 2) + 5)
-        )
-    else:
-        fig, ax = plt.subplots(
-            figsize=(int(n_classes / 2) + 4, int(n_classes / 2) + 2)
-        )
-    marker_size = max(marker_size, int(marker_size * max(1, n_classes / 5)))
-    # When the number of classes is less than 3 the image becomes two small
+    # 8:5 axes, matching the interactive embedding; the figure is built around
+    # it (in inches) once the legend and tick labels are known.
+    axes_width, axes_height = fig_size, fig_size * 5 / 8
+    fig = plt.figure()
+    ax = fig.add_axes((0.1, 0.1, 0.8, 0.8))
     colours = colour_per_class(classes)
 
     if xs.shape[-1] != 1:
@@ -949,21 +948,16 @@ def latent_embed_plot_tsne(
 
             color = colours[classes.index(mol)]
 
-            plt.scatter(
+            ax.scatter(
                 lats[idx, 0],
                 lats[idx, 1],
                 s=marker_size,
-                label=mol[:4],
+                label=mol,
                 facecolor=color,
                 edgecolor=color,
                 alpha=0.5,
             )
 
-        ax.legend(
-            bbox_to_anchor=(1.05, 1),
-            loc="upper left",
-            fontsize=font_size,
-        )
         ax.set_xlabel("TSNE-1", fontsize=font_size)
         ax.set_ylabel("TSNE-2", fontsize=font_size)
 
@@ -972,43 +966,56 @@ def latent_embed_plot_tsne(
         for mol_id, mol in enumerate(set(ys.tolist())):
             idx = np.where(np.array(ys.tolist()) == mol)[0]
             cols = colours[classes.index(mol)]
-            plt.hist(
+            ax.hist(
                 lats[idx],
                 100,
                 color=cols,
                 histtype="step",
                 stacked=True,
                 fill=False,
-                label=mol[:4],
+                label=mol,
                 linewidth=l_w,
             )
-        ax.legend(
-            bbox_to_anchor=(1.05, 1),
-            loc="upper left",
-            fontsize=font_size,
-        )
         ax.set_xlabel("dim 1", fontsize=font_size)
         ax.set_ylabel("freq", fontsize=font_size)
 
-    ax.set_title(
-        f"t-SNE Embedding at epoch: {epoch + 1}",
-        fontsize=title_font_size,
-        fontweight="normal",
+    # Legend outside the axes, in as many columns as fit the axes height
+    ncol = int(np.ceil(n_classes * 1.6 * font_size / 72 / axes_height))
+    ax.legend(
+        bbox_to_anchor=(1.02, 1),
+        loc="upper left",
+        fontsize=font_size,
+        ncol=ncol,
     )
+    legend_width = ncol * 10 * font_size / 72 + 0.3
     ax.tick_params(axis="both", labelsize=font_size)
-    fig.tight_layout()
-
-    if not display:
-        if not os.path.exists("plots"):
-            os.mkdir("plots")
-        plt.savefig(
-            f"plots/embedding_TSNE{mode}.{vis_format}",
-            **({"dpi": 300} if vis_print else {}),
+    left, right, bottom, top = _margins(
+        font_size,
+        title_size=title_font_size,
+        ylabels=_ytick_labels(ax),
+        xlabel=True,
+        ylabel=True,
+        right=legend_width,
+    )
+    width = left + axes_width + right
+    height = bottom + axes_height + top
+    fig.set_size_inches(width, height)
+    ax.set_position(
+        (
+            left / width,
+            bottom / height,
+            axes_width / width,
+            axes_height / height,
         )
-    else:
-        plt.show()
-
-    plt.close()
+    )
+    _set_title(ax, _epoch_title("t-SNE Embedding", epoch), title_font_size)
+    save_figure(
+        fig,
+        f"plots/embedding_TSNE{mode}.{vis_format}",
+        vis_format,
+        vis_print,
+        display,
+    )
 
 
 def dyn_latentembed_plot(
@@ -1068,11 +1075,13 @@ def dyn_latentembed_plot(
     bind_checkbox = altair.binding_radio(
         options=opts,
         labels=[
-            "off"
-            if i == "std-off"
-            else "avg"
-            if i == "std-avg"
-            else str(int(i.split("-")[-1]) + 1)
+            (
+                "off"
+                if i == "std-off"
+                else (
+                    "avg" if i == "std-avg" else str(int(i.split("-")[-1]) + 1)
+                )
+            )
             for i in opts
         ],
         name="Certainty of prediction per dimension:",
@@ -1188,6 +1197,7 @@ def dyn_latentembed_plot(
     chart.save(f"latents/latent_epoch_{epoch + 1}_{mode}.html")
 
 
+@_styled
 def confidence_plot(x, y, s, suffix=None, vis_format="png", vis_print=False):
     logging.info(
         "################################################################",
@@ -1198,11 +1208,10 @@ def confidence_plot(x, y, s, suffix=None, vis_format="png", vis_print=False):
     cmap = plt.get_cmap("jet")
     cols = [cmap(i) for i in np.linspace(0, 1, len(x[0]))]
     classes = np.unique(y)
-    _, font_size, title_font_size = _class_plot_scale(len(classes))
-    rows = len(classes) // 2
-    if len(classes) % 2 != 0:
-        rows += 1
-    fig, ax = plt.subplots(len(classes), sharex=True, sharey=True)
+    fig_size, font_size, title_font_size = _class_plot_scale(len(classes))
+    fig, ax = plt.subplots(
+        len(classes), sharex=True, sharey=True, figsize=(fig_size, fig_size)
+    )
     ax = np.atleast_1d(ax)
     for c, cl in enumerate(classes):
         mu_cl = np.take(x, np.where(np.array(y) == cl)[0], axis=0)
@@ -1225,24 +1234,33 @@ def confidence_plot(x, y, s, suffix=None, vis_format="png", vis_print=False):
                 color=cols[i],
                 label="lat" + str(i + 1),
             )
-        ax[c].set_title(cl, fontsize=title_font_size, fontweight="normal")
+        ax[c].tick_params(labelsize=font_size)
     name = f"plots/confidence.{vis_format}"
     if suffix is not None:
         name = name[:-4] + "_" + suffix + name[-4:]
     handles, labels = ax[-1].get_legend_handles_labels()
-    leg = fig.legend(
-        handles, labels, bbox_to_anchor=(1.06, 0.9)
-    )  # , loc="upper left")
-    plt.tight_layout()
-    fig.savefig(
-        name,
-        **({"dpi": 300} if vis_print else {}),
-        bbox_extra_artists=(leg,),
-        bbox_inches="tight",
+    ncol = int(np.ceil(len(labels) * 1.6 * font_size / 72 / fig_size))
+    fig.legend(
+        handles,
+        labels,
+        loc="center right",
+        fontsize=font_size,
+        ncol=ncol,
     )
-    plt.close()
+    _fit_margins(
+        fig,
+        font_size,
+        title_size=font_size,
+        ylabels=_ytick_labels(ax[0]),
+        right=ncol * 8 * font_size / 72 + 0.3,
+    )
+    fig.subplots_adjust(hspace=0.8)
+    for axis, cl in zip(ax, classes):
+        _set_title(axis, str(cl), font_size)
+    save_figure(fig, name, vis_format, vis_print)
 
 
+@_styled
 def latent_space_similarity_plot(
     latent_space: npt.NDArray,
     class_labels: npt.NDArray,
@@ -1251,9 +1269,7 @@ def latent_space_similarity_plot(
     affinity_matrix: pathlib.Path | None = None,
     plot_mode: str = "mean",
     display: bool = False,
-    font_size: int = 16,
     fig_size: int | None = None,
-    dpi: int = 300,
     vis_format: str = "png",
     vis_print: bool = False,
 ) -> None:
@@ -1280,7 +1296,7 @@ def latent_space_similarity_plot(
     logging.info("Visualising the latent space similarity matrix ...\n")
 
     if affinity_matrix is None:
-        unique_classes = np.unique(class_labels)
+        unique_classes: npt.NDArray | list = np.unique(class_labels)
     else:
         classes_order = (
             pd.read_csv(affinity_matrix, header=0).columns.astype(str).tolist()
@@ -1296,72 +1312,26 @@ def latent_space_similarity_plot(
         else:
             unique_classes = classes_order
 
-    num_classes = len(unique_classes)
-    resolved_fig_size, font_size, title_font_size = _class_plot_scale(
-        num_classes, fig_size
-    )
     cosine_sim = latent_space_similarity_mat(
         latent_space,
         class_labels,
         unique_classes,
-        num_classes,
+        len(unique_classes),
         plot_mode=plot_mode,
     )
 
-    # Visualize average cosine similarity matrix
     classes_in_data = set(np.asarray(class_labels).astype(str))
-    highlight = np.array(
-        [str(c) not in classes_in_data for c in unique_classes]
+    _similarity_figure(
+        cosine_sim,
+        unique_classes,
+        np.array([str(c) not in classes_in_data for c in unique_classes]),
+        _epoch_title("Average Cosine Similarity Matrix", epoch),
+        f"plots/similarity_mean{mode}.{vis_format}",
+        vis_format,
+        vis_print,
+        fig_size,
+        display,
     )
-    title = f"Average Cosine Similarity Matrix at epoch: {epoch + 1}"
-    path = f"plots/similarity_mean{mode}.{vis_format}"
-
-    if fig_size is None:
-        with plt.rc_context(
-            {
-                "font.weight": "bold",
-                "font.size": font_size,
-            }
-        ):
-            _matrix_figure(
-                resolved_fig_size,
-                font_size,
-                title_font_size,
-                title,
-                path,
-                vis_format,
-                vis_print,
-                print_dpi=dpi,
-                data=cosine_sim,
-                class_labels=unique_classes,
-                cmap="RdBu",
-                vmin=-1,
-                vmax=1,
-                highlight=highlight,
-                xlabel="Class Labels",
-                ylabel="Class Labels",
-                display=display,
-            )
-    else:
-        _matrix_figure(
-            resolved_fig_size,
-            font_size,
-            title_font_size,
-            title,
-            path,
-            vis_format,
-            vis_print,
-            print_dpi=dpi,
-            data=cosine_sim,
-            class_labels=unique_classes,
-            cmap="RdBu",
-            vmin=-1,
-            vmax=1,
-            highlight=highlight,
-            xlabel="Class Labels",
-            ylabel="Class Labels",
-            display=display,
-        )
 
 
 def latent_4enc_interpolate_plot(
@@ -1889,6 +1859,7 @@ def interpolations_plot(
     )
 
 
+@_styled
 def plot_affinity_matrix(
     lookup: pd.DataFrame,
     all_classes: list,
@@ -1918,29 +1889,19 @@ def plot_affinity_matrix(
     )
     logging.info("Visualising affinity matrix ...\n")
 
-    resolved_fig_size, font_size, title_font_size = _class_plot_scale(
-        len(all_classes), fig_size
-    )
-
-    highlight = np.array([c not in selected_classes for c in all_classes])
-
-    _matrix_figure(
-        resolved_fig_size,
-        font_size,
-        title_font_size,
+    _similarity_figure(
+        lookup,
+        all_classes,
+        np.array([c not in selected_classes for c in all_classes]),
         "Affinity Matrix",
         f"plots/affinity_matrix.{vis_format}",
         vis_format,
         vis_print,
-        data=lookup,
-        class_labels=all_classes,
-        cmap="RdBu",
-        vmin=-1,
-        vmax=1,
-        highlight=highlight,
+        fig_size,
     )
 
 
+@_styled
 def plot_classes_distribution(
     data: list,
     category: str,
@@ -1968,23 +1929,27 @@ def plot_classes_distribution(
     ticks = range(len(counts))
     ax.bar(ticks, counts, align="center", color="blue", alpha=0.5)
     ax.set_xticks(ticks, labels)
-    ax.set_title(
-        "Classes Distribution",
-        fontsize=title_font_size,
-        fontweight="normal",
-    )
     ax.set_xlabel("Class", fontsize=font_size)
     ax.set_ylabel("Number of Entries", fontsize=font_size)
     ax.tick_params(axis="x", labelsize=font_size, rotation=90)
     ax.tick_params(axis="y", labelsize=font_size)
-    fig.tight_layout()
-    if not os.path.exists("plots"):
-        os.mkdir("plots")
-    plt.savefig(
-        f"plots/classes_distribution_{category}.{vis_format}",
-        **({"dpi": 300} if vis_print else {}),
+    _fit_margins(
+        fig,
+        font_size,
+        title_size=title_font_size,
+        xlabels=labels,
+        ylabels=_ytick_labels(ax),
+        x_rotation=90,
+        xlabel=True,
+        ylabel=True,
     )
-    plt.close()
+    _set_title(ax, "Classes Distribution", title_font_size)
+    save_figure(
+        fig,
+        f"plots/classes_distribution_{category}.{vis_format}",
+        vis_format,
+        vis_print,
+    )
 
 
 def _encoder(i: PIL.Image) -> str:
