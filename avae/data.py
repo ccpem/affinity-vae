@@ -328,13 +328,38 @@ def get_affinity_matrix(
                 )
             )
         if vis_aff:
-            plot_affinity_matrix(
-                lookup=affinity,
-                all_classes=affinity.columns.tolist(),
-                selected_classes=classes,
-                vis_format=vis_format,
-                vis_print=vis_print,
+            plot_path = f"plots/affinity_matrix.{vis_format}"
+            # selected classes are highlighted in the plot, so they are part
+            # of what makes an existing plot up to date
+            classes_path = "plots/affinity_matrix_classes.txt"
+            selected = "\n".join(
+                [
+                    str(pathlib.Path(affinity_path).resolve()),
+                    f"vis_print={vis_print}",
+                    *map(str, classes),
+                ]
             )
+            if (
+                os.path.exists(plot_path)
+                and os.path.getmtime(plot_path)
+                > os.path.getmtime(affinity_path)
+                and os.path.exists(classes_path)
+                and pathlib.Path(classes_path).read_text() == selected
+            ):
+                logging.info(
+                    "Affinity matrix plot is up to date, skipping: "
+                    f"{plot_path}"
+                )
+            else:
+                plot_affinity_matrix(
+                    lookup=affinity,
+                    all_classes=affinity.columns.tolist(),
+                    selected_classes=classes,
+                    vis_format=vis_format,
+                    vis_print=vis_print,
+                )
+                os.makedirs("plots", exist_ok=True)
+                pathlib.Path(classes_path).write_text(selected)
 
         # subset affinity matrix with only the relevant classes
         index = [affinity.columns.get_loc(f"{columns}") for columns in classes]
