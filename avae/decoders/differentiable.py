@@ -250,7 +250,7 @@ class GaussianSplatDecoder(AbstractDecoder):
         `shape` of the output.
         """
         self._shape = shape
-        self._default_axis = default_axis.as_tensor()
+        self._default_axis = default_axis.as_tensor().to(device)
         self._splatter = GaussianSplatRenderer(
             shape,
             device=device,
