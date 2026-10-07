@@ -117,7 +117,19 @@ class SaverMNIST:
                 im = PIL.Image.fromarray(image)
                 width, height = im.size
                 image_name = str(label) + '_' + str(index) + self._image_format
-                image = np.array(image)
+                image = np.asarray(image)
+                # MNIST may be stored as flattened 784-element vectors and need converting into 28x28
+                if image.ndim == 1:0
+                    side = int(np.sqrt(image.size))
+
+                    if side * side != image.size:
+                        raise ValueError(
+                            f"Cannot reshape image with {image.size} "
+                            "elements into a square array"
+                        )
+
+                    image = image.reshape(side, side)
+
 
                 angle = np.random.randint(
                     -self.rotation_angle,
