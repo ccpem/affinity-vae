@@ -240,6 +240,21 @@ class VisPipelineTest(unittest.TestCase):
         self.assertIn("loss_total.png", root_files)
         self.assertNotIn("confusion_valid_norm.csv", root_files)
 
+    def test_vis_dir_epoch_and_best_paths(self):
+        original_cwd = os.getcwd()
+        with tempfile.TemporaryDirectory(prefix="avae-dirs-") as temp_dir:
+            os.chdir(temp_dir)
+            try:
+                utils_vis.set_vis_dir(3)
+                epoch_path = utils_vis.plots_path("a.png")
+                utils_vis.set_vis_dir(3, best=True)
+                best_path = utils_vis.plots_path("a.png")
+            finally:
+                os.chdir(original_cwd)
+
+        self.assertEqual(epoch_path, "plots/epochs/epoch_0003/a.png")
+        self.assertEqual(best_path, "plots/best_epoch0003/a.png")
+
     def test_loss_plot_writes_both_views(self):
         original_cwd = os.getcwd()
         train_history = [np.ones(4), np.full(4, 0.5)]

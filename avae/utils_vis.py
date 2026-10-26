@@ -1,5 +1,7 @@
+import glob
 import os.path
 import pathlib
+import shutil
 
 import matplotlib.pyplot as plt
 import mrcfile
@@ -13,17 +15,25 @@ PLOTS_ROOT = "plots"
 _plots_dir = PLOTS_ROOT
 
 
-def vis_dir(epoch: int | None = None) -> str:
-    """Folder for per-epoch plots: plots/ or plots/epochs/epoch_XXXX."""
+def vis_dir(epoch: int | None = None, best: bool = False) -> str:
+    """Folder for per-epoch plots: plots/, plots/epochs/epoch_XXXX or plots/best_epochXXXX."""
+    if best:
+        return os.path.join(PLOTS_ROOT, f"best_epoch{epoch:04d}")
     if epoch is None:
         return PLOTS_ROOT
     return os.path.join(PLOTS_ROOT, "epochs", f"epoch_{epoch:04d}")
 
 
-def set_vis_dir(epoch: int | None = None) -> None:
-    """Direct per-epoch plots to vis_dir(epoch) (None resets to plots/)."""
+def set_vis_dir(epoch: int | None = None, best: bool = False) -> None:
+    """Direct per-epoch plots to vis_dir(epoch, best) (None resets to plots/)."""
     global _plots_dir
-    _plots_dir = vis_dir(epoch)
+    _plots_dir = vis_dir(epoch, best)
+
+
+def clear_best_dirs() -> None:
+    """Remove any plots/best_epoch* folders so only the latest best is kept."""
+    for path in glob.glob(os.path.join(PLOTS_ROOT, "best_epoch*")):
+        shutil.rmtree(path, ignore_errors=True)
 
 
 def plots_path(fname: str, per_epoch: bool = True) -> str:

@@ -54,7 +54,6 @@ class AffinityConfig(pydantic.BaseModel):
         ),
     )
 
-
     #### Pre-processing parameters
     shift_min: bool = pydantic.Field(
         True, description="Scale data with min-max transformation"
@@ -195,6 +194,13 @@ class AffinityConfig(pydantic.BaseModel):
         False,
         description="Save per-epoch plots in plots/epochs/epoch_XXXX/ "
         "instead of overwriting them in plots/",
+    )
+    vis_best: bool = pydantic.Field(
+        False,
+        description="Make every enabled per-epoch plot, regardless of freq_*, "
+        "whenever the validation loss reaches a new best. Plots go to "
+        "plots/best_epochXXXX/ (only the latest best is kept) and are also "
+        "copied to the normal plot location for that epoch",
     )
     vis_print: bool = pydantic.Field(
         False,
@@ -409,6 +415,7 @@ def load_config_params(
                 'vis_format',
                 'vis_print',
                 'vis_epochs',
+                'vis_best',
                 'vis_z_n_int',
                 'vis_pose_class',
             ]:
@@ -435,6 +442,7 @@ def load_config_params(
                 'vis_format',
                 'vis_print',
                 'vis_epochs',
+                'vis_best',
                 'vis_his',
                 'vis_aff',
                 'vis_cyc',

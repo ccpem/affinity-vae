@@ -102,6 +102,13 @@ class ConfigTest(unittest.TestCase):
         saved_model = load_config_params(config_file=output_path)
         self.assertEqual(saved_model, self.default_model)
 
+    def test_vis_all_does_not_enable_epoch_and_best_plots(self):
+        data = load_config_params(
+            config_file=self.config, local_args={"vis_all": True}
+        )
+        self.assertFalse(data.vis_epochs)
+        self.assertFalse(data.vis_best)
+
     def test_validate_config(self):
 
         data = load_config_params(
@@ -118,6 +125,7 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(data.split, self.data_local['split'])
         self.assertEqual(data.new_out, self.default_model.new_out)
         self.assertFalse(data.vis_epochs)
+        self.assertFalse(data.vis_best)
         self.assertIsNone(data.out)
 
         data_config_only = load_config_params(config_file=self.config)

@@ -161,6 +161,39 @@ class VisEpochsTest(unittest.TestCase):
         self.assertIn(os.path.join("epochs", "epoch_0002"), dirs)
         self.assertNotIn(os.path.join("epochs", "epoch_0001"), dirs)
 
+    def test_vis_best_single_folder(self):
+        snap = self._run(epochs=3, vis_best=True, vis_rec=True, freq_rec=10)
+        best = [(r, f) for r, f in snap if r.startswith("best_epoch")]
+        self.assertEqual(len(best), 1)
+        self.assertTrue(any("recon" in name for name in best[0][1]))
+
+    def test_vis_best_no_plots_enabled(self):
+        off = {
+            f"vis_{n}": False
+            for n in (
+                "acc",
+                "rec",
+                "emb",
+                "dynamic",
+                "sim",
+                "int",
+                "dis",
+                "pos",
+            )
+        }
+        with self.assertLogs(level="WARNING") as cm:
+            snap = self._run(epochs=2, vis_best=True, **off)
+        self.assertTrue(
+            any(
+                "vis_best is set but no per-epoch plots are enabled" in m
+                for m in cm.output
+            )
+        )
+        self.assertFalse(
+            any(r.startswith("best_epoch") for r in self._dirs(snap))
+        )
+
+
 def helper_train_eval(
     data, eval=True, noplot=False, nolat=False, nostate=False
 ):

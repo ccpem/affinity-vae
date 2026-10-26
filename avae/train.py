@@ -1,5 +1,6 @@
 import logging
 import os
+import shutil
 
 import lightning as lt
 import numpy as np
@@ -164,6 +165,24 @@ def train(params):
     e_start = 0
     t_history = []
     v_history = []
+    best_val_loss = float("inf")
+    if params.vis_best and not any(
+        getattr(params, f"vis_{name}")
+        for name in (
+            "acc",
+            "rec",
+            "emb",
+            "dynamic",
+            "sim",
+            "int",
+            "dis",
+            "pos",
+        )
+    ):
+        logging.warning(
+            "vis_best is set but no per-epoch plots are enabled; "
+            "no best plots will be saved."
+        )
 
     if params.restart:
         if state is None:
@@ -181,6 +200,8 @@ def train(params):
         e_start = checkpoint["epoch"]
         t_history = checkpoint["t_loss_history"]
         v_history = checkpoint["v_loss_history"]
+        if params.vis_best and len(v_history) > 0:
+            best_val_loss = float(np.nanmin([float(v[0]) for v in v_history]))
 
     # ########################## TRAINING LOOP ################################
 
@@ -294,6 +315,15 @@ def train(params):
                 xhat_val.extend(vis.format(v_hat, data_dim))
             v_history[-1] /= len(vals)
 
+            # lowest validation total loss so far (only tracked with vis_best),
+            # decided on rank zero so all ranks take the same plotting branches
+            is_best = fabric.broadcast(
+                bool(params.vis_best and v_history[-1][0] < best_val_loss),
+                src=0,
+            )
+            if is_best:
+                best_val_loss = float(v_history[-1][0])
+
             logging.info(
                 "Validation : Epoch: [%d/%d] | Loss: %f | Recon: %f | "
                 "KLdiv: %f | Affin: %f | Beta: %f | Gamma: %f"
@@ -349,12 +379,12 @@ def train(params):
             (
                 # visualising embedding
                 params.vis_emb
-                and (epoch + 1) % params.freq_emb == 0
+                and ((epoch + 1) % params.freq_emb == 0 or is_best)
             )
             or (
                 # visualising dynamic embedding
                 params.vis_dynamic
-                and (epoch + 1) % params.freq_dynamic == 0
+                and ((epoch + 1) % params.freq_dynamic == 0 or is_best)
             )
             or (
                 # saving states of the model
@@ -405,16 +435,24 @@ def train(params):
             )
 
         # ########################## VISUALISE ################################
-        utils_vis.set_vis_dir(epoch + 1 if params.vis_epochs else None)
+        if is_best:
+            # render everything once into the best folder, keeping only the latest
+            if rank_zero:
+                utils_vis.clear_best_dirs()
+            utils_vis.set_vis_dir(epoch + 1, best=True)
+        else:
+            utils_vis.set_vis_dir(epoch + 1 if params.vis_epochs else None)
         logging.info("")
 
         static_embedding_due = (
-            rank_zero and params.vis_emb and (epoch + 1) % params.freq_emb == 0
+            rank_zero
+            and params.vis_emb
+            and ((epoch + 1) % params.freq_emb == 0 or is_best)
         )
         dynamic_embedding_due = (
             rank_zero
             and params.vis_dynamic
-            and (epoch + 1) % params.freq_dynamic == 0
+            and ((epoch + 1) % params.freq_dynamic == 0 or is_best)
         )
         if static_embedding_due or dynamic_embedding_due:
             latent_columns = [
@@ -433,10 +471,9 @@ def train(params):
             logging.info("")
 
         # visualise accuracy: confusion and F1 scores
-        if (
-            params.vis_acc
-            and params.freq_acc != 0
-            and (epoch + 1) % params.freq_acc == 0
+        if params.vis_acc and (
+            (params.freq_acc != 0 and (epoch + 1) % params.freq_acc == 0)
+            or is_best
         ):
             combined_accuracy_data = utils_learning.combine_accuracy_data(
                 z_train,
@@ -516,7 +553,11 @@ def train(params):
             )
 
         # visualise reconstructions - last batch
-        if rank_zero and params.vis_rec and (epoch + 1) % params.freq_rec == 0:
+        if (
+            rank_zero
+            and params.vis_rec
+            and ((epoch + 1) % params.freq_rec == 0 or is_best)
+        ):
             vis.recon_plot(
                 x,
                 x_hat,
@@ -537,7 +578,11 @@ def train(params):
             )
 
         # visualise mean and logvar similarity matrix
-        if rank_zero and params.vis_sim and (epoch + 1) % params.freq_sim == 0:
+        if (
+            rank_zero
+            and params.vis_sim
+            and ((epoch + 1) % params.freq_sim == 0 or is_best)
+        ):
             vis.latent_space_similarity_plot(
                 z_train,
                 np.array(y_train),
@@ -590,7 +635,11 @@ def train(params):
             )
 
         # visualise latent disentanglement
-        if rank_zero and params.vis_dis and (epoch + 1) % params.freq_dis == 0:
+        if (
+            rank_zero
+            and params.vis_dis
+            and ((epoch + 1) % params.freq_dis == 0 or is_best)
+        ):
             if not pose:
                 poses = None
             else:
@@ -610,7 +659,7 @@ def train(params):
             rank_zero
             and pose
             and params.vis_pos
-            and (epoch + 1) % params.freq_pos == 0
+            and ((epoch + 1) % params.freq_pos == 0 or is_best)
         ):
             vis.pose_disentanglement_plot(
                 dshape,
@@ -636,7 +685,11 @@ def train(params):
                 )
 
         # visualise interpolations
-        if rank_zero and params.vis_int and (epoch + 1) % params.freq_int == 0:
+        if (
+            rank_zero
+            and params.vis_int
+            and ((epoch + 1) % params.freq_int == 0 or is_best)
+        ):
             if len(tests) != 0:
                 xs = np.r_[z_train, z_val, z_test]
                 ys = np.r_[y_train, y_val, np.ones(len(z_test))]
@@ -675,6 +728,15 @@ def train(params):
                 vis_format=params.vis_format,
                 vis_print=params.vis_print,
             )
+        best_dir = utils_vis.vis_dir(epoch + 1, best=True)
+        if rank_zero and is_best and os.path.isdir(best_dir):
+            # keep the normal destination for this epoch up to date as well
+            shutil.copytree(
+                best_dir,
+                utils_vis.vis_dir(epoch + 1 if params.vis_epochs else None),
+                dirs_exist_ok=True,
+            )
+
         # ########################## SAVE STATE ###############################
         if params.freq_sta != 0 and (epoch + 1) % params.freq_sta == 0:
             if rank_zero:
