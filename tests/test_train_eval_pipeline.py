@@ -123,6 +123,44 @@ class TrainEvalTest(unittest.TestCase):
         self.assertEqual(n_states_train, 2)
 
 
+class VisEpochsTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.testdata_mrc = os.path.dirname(testdata_mrc.__file__)
+        self.data_params = pipeline_params(self.testdata_mrc)
+
+    def _run(self, **overrides):
+        """Train in a temp dir; return a snapshot of (dir, files) under plots/."""
+        params = dict(self.data_params)
+        params.update(overrides)
+        data = config.load_config_params(local_args=params)
+        original_cwd = os.getcwd()
+        with tempfile.TemporaryDirectory(prefix='avae-') as temp_dir:
+            os.chdir(temp_dir)
+            try:
+                run_pipeline(data)
+                return self._snapshot(temp_dir)
+            finally:
+                os.chdir(original_cwd)
+
+    @staticmethod
+    def _snapshot(temp_dir):
+        plots = os.path.join(temp_dir, "plots")
+        found = []
+        for root, dirs, files in os.walk(plots):
+            rel = os.path.relpath(root, plots)
+            found.append((rel, sorted(files)))
+        return found
+
+    @staticmethod
+    def _dirs(snapshot):
+        return {rel for rel, _ in snapshot}
+
+    def test_vis_epochs_freq(self):
+        snap = self._run(epochs=2, vis_epochs=True, vis_rec=True, freq_rec=2)
+        dirs = self._dirs(snap)
+        self.assertIn(os.path.join("epochs", "epoch_0002"), dirs)
+        self.assertNotIn(os.path.join("epochs", "epoch_0001"), dirs)
+
 def helper_train_eval(
     data, eval=True, noplot=False, nolat=False, nostate=False
 ):

@@ -191,6 +191,11 @@ class AffinityConfig(pydantic.BaseModel):
         "(vector formats stay sharp at any size and are fastest for "
         "large matrices)",
     )
+    vis_epochs: bool = pydantic.Field(
+        False,
+        description="Save per-epoch plots in plots/epochs/epoch_XXXX/ "
+        "instead of overwriting them in plots/",
+    )
     vis_print: bool = pydantic.Field(
         False,
         description="Render matrix visualisations (confusion, affinity, "
@@ -403,6 +408,7 @@ def load_config_params(
                 'vis_all',
                 'vis_format',
                 'vis_print',
+                'vis_epochs',
                 'vis_z_n_int',
                 'vis_pose_class',
             ]:
@@ -428,6 +434,7 @@ def load_config_params(
             if key in [
                 'vis_format',
                 'vis_print',
+                'vis_epochs',
                 'vis_his',
                 'vis_aff',
                 'vis_cyc',

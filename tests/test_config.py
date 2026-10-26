@@ -117,6 +117,7 @@ class ConfigTest(unittest.TestCase):
         )
         self.assertEqual(data.split, self.data_local['split'])
         self.assertEqual(data.new_out, self.default_model.new_out)
+        self.assertFalse(data.vis_epochs)
         self.assertIsNone(data.out)
 
         data_config_only = load_config_params(config_file=self.config)

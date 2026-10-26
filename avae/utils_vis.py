@@ -9,6 +9,28 @@ import torch
 
 SCREEN_HEIGHT_PX = 720  # top half of a 1440p screen
 VECTOR_FORMATS = ("pdf", "svg", "eps")
+PLOTS_ROOT = "plots"
+_plots_dir = PLOTS_ROOT
+
+
+def vis_dir(epoch: int | None = None) -> str:
+    """Folder for per-epoch plots: plots/ or plots/epochs/epoch_XXXX."""
+    if epoch is None:
+        return PLOTS_ROOT
+    return os.path.join(PLOTS_ROOT, "epochs", f"epoch_{epoch:04d}")
+
+
+def set_vis_dir(epoch: int | None = None) -> None:
+    """Direct per-epoch plots to vis_dir(epoch) (None resets to plots/)."""
+    global _plots_dir
+    _plots_dir = vis_dir(epoch)
+
+
+def plots_path(fname: str, per_epoch: bool = True) -> str:
+    """Return the save path for a plot, creating its folder on demand."""
+    base = _plots_dir if per_epoch else PLOTS_ROOT
+    os.makedirs(base, exist_ok=True)
+    return os.path.join(base, fname)
 
 
 def create_grid_for_plotting(
@@ -123,7 +145,7 @@ def save_imshow_png(
     fig.subplots_adjust(left=0, right=1, bottom=0, top=1)
     save_figure(
         fig,
-        "plots/" + fname,
+        plots_path(fname),
         fname.rsplit(".", 1)[-1],
         vis_print,
         display,
@@ -132,9 +154,7 @@ def save_imshow_png(
 
 
 def save_mrc_file(fname: str, array: npt.NDArray) -> None:
-    if not os.path.exists("plots"):
-        os.mkdir("plots")
-    with mrcfile.new("plots/" + fname, overwrite=True) as mrc:
+    with mrcfile.new(plots_path(fname), overwrite=True) as mrc:
         mrc.set_data(array)
 
 

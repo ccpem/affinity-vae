@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import torch
 
-from . import utils_learning, vis
+from . import utils_learning, utils_vis, vis
 from .data import load_data
 from .utils import as_list, latest_file
 from .utils_gpu import setup_gpus
@@ -22,6 +22,9 @@ def evaluate(params):
     params : object
         Pydantic validated config object containing all the parameters required for evaluation.
     """
+
+    # start from plots/ in case an earlier training run in this process failed mid-epoch
+    utils_vis.set_vis_dir(None)
 
     # ############################### GPU SETUP ################################
 

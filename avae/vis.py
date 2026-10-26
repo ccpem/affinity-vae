@@ -26,6 +26,7 @@ from .utils_vis import (
     create_grid_for_plotting,
     fill_grid_for_plottting,
     latent_space_similarity_mat,
+    plots_path,
     pose_interpolation,
     save_figure,
     save_imshow_png,
@@ -514,7 +515,12 @@ def loss_plot(
             (vlabs[i], val_loss[i], cols[i], "--") for i in range(4)
         ]
     _loss_curve_figure(
-        epochs, full_series, "plots/loss", vis_format, vis_print, title=title
+        epochs,
+        full_series,
+        plots_path("loss", per_epoch=False),
+        vis_format,
+        vis_print,
+        title=title,
     )
 
     # plotting only the total loss as it sometimes is a few order of magnitude higher than KLD and affinity losses
@@ -522,7 +528,11 @@ def loss_plot(
     if val_loss is not None:
         total_series.append((vlabs[0], val_loss[0], cols[0], "--"))
     _loss_curve_figure(
-        epochs, total_series, "plots/loss_total", vis_format, vis_print
+        epochs,
+        total_series,
+        plots_path("loss_total", per_epoch=False),
+        vis_format,
+        vis_print,
     )
 
 
@@ -549,7 +559,7 @@ def plot_cyc_variable(
     _loss_curve_figure(
         len(array),
         [(None, array, None, "-")],
-        f"plots/hyperaparam_{variable_name}",
+        plots_path(f"hyperaparam_{variable_name}", per_epoch=False),
         vis_format,
         vis_print,
         ylabel=rf"$\{variable_name}$",
@@ -607,7 +617,7 @@ def confusion_plot(
         (f"confusion_{valid_name}", y_val, ypred_val, ordered_class_eval),
     ):
         _confusion_figure(
-            y, ypred, labels, f"plots/{stem}", epoch, vis_format, vis_print
+            y, ypred, labels, plots_path(stem), epoch, vis_format, vis_print
         )
 
 
@@ -679,8 +689,8 @@ def f1_plot(
     else:
         label = "valid"
 
-    f1_train_file = f"plots/f1_train{mode}.csv"
-    f1_valid_file = f"plots/f1_{label}.csv"
+    f1_train_file = plots_path(f"f1_train{mode}.csv", per_epoch=False)
+    f1_valid_file = plots_path(f"f1_{label}.csv", per_epoch=False)
 
     train_df = pd.DataFrame([train_f1_score], columns=classes_list)
     valid_df = pd.DataFrame([valid_f1_score], columns=classes_list)
@@ -723,7 +733,12 @@ def f1_plot(
         ylabel=True,
     )
     _set_title(ax, _epoch_title("F1 Score", epoch), title_font_size)
-    save_figure(fig, f"plots/f1{mode}.{vis_format}", vis_format, vis_print)
+    save_figure(
+        fig,
+        plots_path(f"f1{mode}.{vis_format}", per_epoch=False),
+        vis_format,
+        vis_print,
+    )
 
 
 @_styled
@@ -850,7 +865,7 @@ def recon_plot(
 
         save_mrc_file(f"recon_{mode}.mrc", grid_for_napari)
         pd.DataFrame(reconstruction_index).to_csv(
-            f"plots/recon_{mode}.csv", index=False
+            plots_path(f"recon_{mode}.csv"), index=False
         )
 
 
@@ -1016,7 +1031,7 @@ def latent_embed_plot_tsne(
     _set_title(ax, _epoch_title("t-SNE Embedding", epoch), title_font_size)
     save_figure(
         fig,
-        f"plots/embedding_TSNE{mode}.{vis_format}",
+        plots_path(f"embedding_TSNE{mode}.{vis_format}"),
         vis_format,
         vis_print,
         display,
@@ -1242,7 +1257,7 @@ def confidence_plot(x, y, s, suffix=None, vis_format="png", vis_print=False):
                 label="lat" + str(i + 1),
             )
         ax[c].tick_params(labelsize=font_size)
-    name = f"plots/confidence.{vis_format}"
+    name = plots_path(f"confidence.{vis_format}")
     if suffix is not None:
         name = name[:-4] + "_" + suffix + name[-4:]
     handles, labels = ax[-1].get_legend_handles_labels()
@@ -1331,7 +1346,7 @@ def latent_space_similarity_plot(
         unique_classes,
         np.array([str(c) not in classes_in_data for c in unique_classes]),
         _epoch_title("Average Cosine Similarity Matrix", epoch),
-        f"plots/similarity_mean{mode}.{vis_format}",
+        plots_path(f"similarity_mean{mode}.{vis_format}"),
         vis_format,
         vis_print,
         fig_size,
@@ -1880,7 +1895,7 @@ def plot_affinity_matrix(
         all_classes,
         np.array([c not in selected_classes for c in all_classes]),
         "Affinity Matrix",
-        f"plots/affinity_matrix.{vis_format}",
+        plots_path(f"affinity_matrix.{vis_format}", per_epoch=False),
         vis_format,
         vis_print,
         fig_size,
@@ -1932,7 +1947,9 @@ def plot_classes_distribution(
     _set_title(ax, "Classes Distribution", title_font_size)
     save_figure(
         fig,
-        f"plots/classes_distribution_{category}.{vis_format}",
+        plots_path(
+            f"classes_distribution_{category}.{vis_format}", per_epoch=False
+        ),
         vis_format,
         vis_print,
     )

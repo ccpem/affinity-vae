@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 import torch
 
-from avae import config, vis
+from avae import config, utils_vis, vis
 from tests import testdata_mrc
 from tests.test_train_eval_pipeline import helper_train_eval
 
@@ -200,6 +200,45 @@ class VisPipelineTest(unittest.TestCase):
             reconstruction_index["label"].tolist(),
             ["d", "b", "a", "c"],
         )
+
+    def tearDown(self) -> None:
+        utils_vis.set_vis_dir(None)
+
+    def test_plots_dir_separates_per_epoch_plots(self):
+        original_cwd = os.getcwd()
+        train_history = [np.ones(4), np.full(4, 0.5)]
+        val_history = [np.ones(4), np.full(4, 0.75)]
+
+        with tempfile.TemporaryDirectory(prefix="avae-epochs-") as temp_dir:
+            os.chdir(temp_dir)
+            try:
+                utils_vis.set_vis_dir(3)
+                vis.confusion_plot(
+                    np.array(["a", "a", "b", "b"]),
+                    np.array(["a", "a", "b", "b"]),
+                    np.array(["a", "a", "b", "b"]),
+                    np.array(["a", "a", "b", "b"]),
+                    epoch=3,
+                )
+                vis.loss_plot(
+                    2,
+                    np.ones(2),
+                    np.ones(2),
+                    train_history,
+                    val_history,
+                )
+                epoch_files = os.listdir("plots/epochs/epoch_0003")
+                root_files = os.listdir("plots")
+                epoch_dirs = os.listdir("plots/epochs")
+            finally:
+                os.chdir(original_cwd)
+
+        self.assertEqual(epoch_dirs, ["epoch_0003"])
+        self.assertIn("confusion_valid_norm.csv", epoch_files)
+        self.assertNotIn("loss.png", epoch_files)
+        self.assertIn("loss.png", root_files)
+        self.assertIn("loss_total.png", root_files)
+        self.assertNotIn("confusion_valid_norm.csv", root_files)
 
     def test_loss_plot_writes_both_views(self):
         original_cwd = os.getcwd()

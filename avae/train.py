@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import torch
 
-from . import utils_learning, vis
+from . import utils_learning, utils_vis, vis
 from .cyc_annealing import setup_annealing
 from .data import load_data
 from .loss import AVAELoss
@@ -33,6 +33,8 @@ def train(params):
         A pydantic validated object containing all the training configuration parameters as attributes.
     """
 
+    # start from plots/ in case an earlier run in this process failed mid-epoch
+    utils_vis.set_vis_dir(None)
     lt.pytorch.seed_everything(42)
 
     # ############################### GPU SETUP ################################
@@ -403,6 +405,7 @@ def train(params):
             )
 
         # ########################## VISUALISE ################################
+        utils_vis.set_vis_dir(epoch + 1 if params.vis_epochs else None)
         logging.info("")
 
         static_embedding_due = (
@@ -724,3 +727,5 @@ def train(params):
 
                 logging.info(f"Saved meta file : {filename} for evaluation \n")
         fabric.barrier()
+
+    utils_vis.set_vis_dir(None)
