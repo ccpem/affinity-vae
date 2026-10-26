@@ -690,7 +690,7 @@ def train(params):
             and params.vis_int
             and ((epoch + 1) % params.freq_int == 0 or is_best)
         ):
-            if len(tests) != 0:
+            if len(z_test) != 0:  # test latents only exist on freq_eval epochs
                 xs = np.r_[z_train, z_val, z_test]
                 ys = np.r_[y_train, y_val, np.ones(len(z_test))]
                 if pose:

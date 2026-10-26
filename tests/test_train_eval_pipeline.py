@@ -161,6 +161,11 @@ class VisEpochsTest(unittest.TestCase):
         self.assertIn(os.path.join("epochs", "epoch_0002"), dirs)
         self.assertNotIn(os.path.join("epochs", "epoch_0001"), dirs)
 
+    def test_vis_int_without_eval_epoch(self):
+        # z_test is only filled on freq_eval epochs; interpolation must not
+        # try to concatenate it on other epochs.
+        self._run(epochs=2, vis_int=True, freq_int=1, freq_eval=10)
+
     def test_vis_best_single_folder(self):
         snap = self._run(epochs=3, vis_best=True, vis_rec=True, freq_rec=10)
         best = [(r, f) for r, f in snap if r.startswith("best_epoch")]
