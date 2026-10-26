@@ -418,6 +418,7 @@ def load_config_params(
             # make sure frequency is on for associated vis parameters
             if key in [
                 'vis_format',
+                'vis_print',
                 'vis_his',
                 'vis_aff',
                 'vis_cyc',
