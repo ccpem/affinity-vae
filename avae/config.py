@@ -381,7 +381,7 @@ def load_config_params(
     logging.info("Polishing config parameters...")
     for key, val in params.items():
         # logging.info("%s: %s", key, str(val))
-        if type(val) == pathlib.Path:
+        if isinstance(val, pathlib.Path):
             # turn relative paths to absolute
             params[key] = str(val.absolute())
         if (
