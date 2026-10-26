@@ -45,6 +45,15 @@ class AffinityConfig(pydantic.BaseModel):
     new_out: bool = pydantic.Field(
         False, description="Create new output directory"
     )
+    out: pathlib.Path | None = pydantic.Field(
+        None,
+        description=(
+            "Directory to write all outputs to (created if missing). Combined "
+            "with --new_out, the results_<...> run directory is created "
+            "inside it. For evaluation, point it at the training run directory."
+        ),
+    )
+
 
     #### Pre-processing parameters
     shift_min: bool = pydantic.Field(

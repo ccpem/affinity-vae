@@ -118,6 +118,10 @@ def run(**kwargs):
         logging.getLogger().setLevel(logging.DEBUG)
         logging.getLogger("matplotlib.font_manager").disabled = True
 
+    if params.out is not None:
+        os.makedirs(params.out, exist_ok=True)
+        os.chdir(params.out)
+
     if params.new_out:
         dir_name = f'results_{params.date_time_run}_model_{params.model}_lat{params.latent_dims}_pose{params.pose_dims}_lr{params.learning}_beta{params.beta}_gamma{params.gamma}'
         if not os.path.exists(dir_name):
