@@ -183,6 +183,11 @@ def train(params):
             "vis_best is set but no per-epoch plots are enabled; "
             "no best plots will be saved."
         )
+    if params.vis_best and params.best_start > params.epochs:
+        logging.warning(
+            f"vis_best starts at epoch {params.best_start}, after the last "
+            f"epoch ({params.epochs}); no best plots will be saved."
+        )
 
     if params.restart:
         if state is None:
@@ -200,8 +205,9 @@ def train(params):
         e_start = checkpoint["epoch"]
         t_history = checkpoint["t_loss_history"]
         v_history = checkpoint["v_loss_history"]
-        if params.vis_best and len(v_history) > 0:
-            best_val_loss = float(np.nanmin([float(v[0]) for v in v_history]))
+        tracked = v_history[params.best_start - 1 :]
+        if params.vis_best and len(tracked) > 0:
+            best_val_loss = float(np.nanmin([float(v[0]) for v in tracked]))
 
     # ########################## TRAINING LOOP ################################
 
@@ -318,7 +324,11 @@ def train(params):
             # lowest validation total loss so far (only tracked with vis_best),
             # decided on rank zero so all ranks take the same plotting branches
             is_best = fabric.broadcast(
-                bool(params.vis_best and v_history[-1][0] < best_val_loss),
+                bool(
+                    params.vis_best
+                    and epoch + 1 >= params.best_start
+                    and v_history[-1][0] < best_val_loss
+                ),
                 src=0,
             )
             if is_best:

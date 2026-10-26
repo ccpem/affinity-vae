@@ -202,6 +202,11 @@ class AffinityConfig(pydantic.BaseModel):
         "plots/best_epochXXXX/ (only the latest best is kept) and are also "
         "copied to the normal plot location for that epoch",
     )
+    best_start: pydantic.PositiveInt = pydantic.Field(
+        10,
+        description="First epoch --vis_best considers; earlier epochs are "
+        "ignored when tracking the best validation loss",
+    )
     vis_print: bool = pydantic.Field(
         False,
         description="Render matrix visualisations (confusion, affinity, "

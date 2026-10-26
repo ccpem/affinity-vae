@@ -177,10 +177,40 @@ class VisEpochsTest(unittest.TestCase):
         self._run(epochs=2, vis_int=True, freq_int=1, freq_eval=10)
 
     def test_vis_best_single_folder(self):
-        snap = self._run(epochs=3, vis_best=True, vis_rec=True, freq_rec=10)
+        snap = self._run(
+            epochs=3, vis_best=True, vis_rec=True, freq_rec=10, best_start=1
+        )
         best = [(r, f) for r, f in snap if r.startswith("best_epoch")]
         self.assertEqual(len(best), 1)
         self.assertTrue(any("recon" in name for name in best[0][1]))
+
+    def test_vis_best_respects_best_start(self):
+        snap = self._run(
+            epochs=3,
+            vis_best=True,
+            vis_rec=True,
+            freq_rec=10,
+            best_start=2,
+        )
+        dirs = self._dirs(snap)
+        self.assertNotIn("best_epoch0001", dirs)
+        self.assertEqual(
+            len([r for r in dirs if r.startswith("best_epoch")]), 1
+        )
+
+    def test_vis_best_start_after_last_epoch(self):
+        with self.assertLogs(level="WARNING") as cm:
+            snap = self._run(
+                epochs=2,
+                vis_best=True,
+                vis_rec=True,
+                freq_rec=10,
+                best_start=10,
+            )
+        self.assertTrue(any("after the last epoch" in m for m in cm.output))
+        self.assertFalse(
+            any(r.startswith("best_epoch") for r in self._dirs(snap))
+        )
 
     def test_vis_best_no_plots_enabled(self):
         off = {

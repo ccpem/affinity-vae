@@ -65,6 +65,7 @@ class ConfigTest(unittest.TestCase):
     def test_config_defaults(self):
         self.assertTrue(AffinityConfig.model_config["validate_default"])
         self.assertEqual(self.default_model.model, "cnn")
+        self.assertEqual(self.default_model.best_start, 10)
 
     def test_legacy_models_only_allow_existing_checkpoints(self):
         for model in ("u", "a", "b"):
