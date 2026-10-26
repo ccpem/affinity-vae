@@ -192,8 +192,8 @@ class AffinityConfig(pydantic.BaseModel):
     )
     vis_epochs: bool = pydantic.Field(
         False,
-        description="Save per-epoch plots in plots/epochs/epoch_XXXX/ "
-        "instead of overwriting them in plots/",
+        description="Also keep each epoch's plots in "
+        "plots/epochs/epoch_XXXX/; plots/ still holds the latest set",
     )
     vis_best: bool = pydantic.Field(
         False,

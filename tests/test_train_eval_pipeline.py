@@ -161,6 +161,16 @@ class VisEpochsTest(unittest.TestCase):
         self.assertIn(os.path.join("epochs", "epoch_0002"), dirs)
         self.assertNotIn(os.path.join("epochs", "epoch_0001"), dirs)
 
+    def test_vis_epochs_copied_to_plots(self):
+        snap = dict(
+            self._run(epochs=2, vis_epochs=True, vis_rec=True, freq_rec=1)
+        )
+        epoch_files = snap[os.path.join("epochs", "epoch_0002")]
+        recon = [f for f in epoch_files if "recon" in f]
+        self.assertTrue(recon)
+        for name in recon:
+            self.assertIn(name, snap["."])
+
     def test_vis_int_without_eval_epoch(self):
         # z_test is only filled on freq_eval epochs; interpolation must not
         # try to concatenate it on other epochs.

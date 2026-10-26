@@ -728,14 +728,17 @@ def train(params):
                 vis_format=params.vis_format,
                 vis_print=params.vis_print,
             )
-        best_dir = utils_vis.vis_dir(epoch + 1, best=True)
-        if rank_zero and is_best and os.path.isdir(best_dir):
-            # keep the normal destination for this epoch up to date as well
-            shutil.copytree(
-                best_dir,
-                utils_vis.vis_dir(epoch + 1 if params.vis_epochs else None),
-                dirs_exist_ok=True,
-            )
+        # plots were saved once into the best or epoch folder; copy them so
+        # the epoch folder (on best epochs) and plots/ hold the latest set
+        source = utils_vis.vis_dir(epoch + 1, best=is_best)
+        targets = []
+        if is_best and params.vis_epochs:
+            targets.append(utils_vis.vis_dir(epoch + 1))
+        if is_best or params.vis_epochs:
+            targets.append(utils_vis.vis_dir(None))
+        if rank_zero and os.path.isdir(source):
+            for target in targets:
+                shutil.copytree(source, target, dirs_exist_ok=True)
 
         # ########################## SAVE STATE ###############################
         if params.freq_sta != 0 and (epoch + 1) % params.freq_sta == 0:
