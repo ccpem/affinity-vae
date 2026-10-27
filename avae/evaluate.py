@@ -25,6 +25,7 @@ def evaluate(params):
 
     # start from plots/ in case an earlier training run in this process failed mid-epoch
     utils_vis.set_vis_dir(None)
+    utils_vis.set_run_id("")
 
     # ############################### GPU SETUP ################################
 

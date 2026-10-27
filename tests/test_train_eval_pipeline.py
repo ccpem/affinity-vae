@@ -1,5 +1,6 @@
 import os
 import random
+import re
 import tempfile
 import unittest
 
@@ -124,6 +125,8 @@ class TrainEvalTest(unittest.TestCase):
 
 
 class VisEpochsTest(unittest.TestCase):
+    RUN_ID = "260101-0000"
+
     def setUp(self) -> None:
         self.testdata_mrc = os.path.dirname(testdata_mrc.__file__)
         self.data_params = pipeline_params(self.testdata_mrc)
@@ -135,6 +138,7 @@ class VisEpochsTest(unittest.TestCase):
         training to mimic leftovers from an earlier run.
         """
         params = dict(self.data_params)
+        params.setdefault("date_time_run", self.RUN_ID)
         params.update(overrides)
         data = config.load_config_params(local_args=params)
         original_cwd = os.getcwd()
@@ -165,14 +169,18 @@ class VisEpochsTest(unittest.TestCase):
     def test_vis_epochs_freq(self):
         snap = self._run(epochs=2, vis_epochs=True, vis_rec=True, freq_rec=2)
         dirs = self._dirs(snap)
-        self.assertIn(os.path.join("epochs", "epoch_0002"), dirs)
-        self.assertNotIn(os.path.join("epochs", "epoch_0001"), dirs)
+        self.assertIn(
+            os.path.join(f"epochs_{self.RUN_ID}", "epoch_0002"), dirs
+        )
+        self.assertNotIn(
+            os.path.join(f"epochs_{self.RUN_ID}", "epoch_0001"), dirs
+        )
 
     def test_vis_epochs_copied_to_plots(self):
         snap = dict(
             self._run(epochs=2, vis_epochs=True, vis_rec=True, freq_rec=1)
         )
-        epoch_files = snap[os.path.join("epochs", "epoch_0002")]
+        epoch_files = snap[os.path.join(f"epochs_{self.RUN_ID}", "epoch_0002")]
         recon = [f for f in epoch_files if "recon" in f]
         self.assertTrue(recon)
         for name in recon:
@@ -204,7 +212,9 @@ class VisEpochsTest(unittest.TestCase):
     def test_stale_leftover_not_copied_to_plots(self):
         # epoch 1 has no plots due; a stale file left in its folder by an
         # earlier run must neither reach plots/ nor be deleted
-        stale = os.path.join("plots", "epochs", "epoch_0001", "stale.png")
+        stale = os.path.join(
+            "plots", f"epochs_{self.RUN_ID}", "epoch_0001", "stale.png"
+        )
         snap = dict(
             self._run(
                 seed_files=(stale,),
@@ -215,7 +225,10 @@ class VisEpochsTest(unittest.TestCase):
             )
         )
         self.assertNotIn("stale.png", snap["."])
-        self.assertIn("stale.png", snap[os.path.join("epochs", "epoch_0001")])
+        self.assertIn(
+            "stale.png",
+            snap[os.path.join(f"epochs_{self.RUN_ID}", "epoch_0001")],
+        )
 
     def test_vis_int_without_eval_epoch(self):
         # z_test is only filled on freq_eval epochs; interpolation must not
@@ -226,7 +239,11 @@ class VisEpochsTest(unittest.TestCase):
         snap = self._run(
             epochs=3, vis_best=True, vis_rec=True, freq_rec=10, best_start=1
         )
-        best = [(r, f) for r, f in snap if r.startswith("best_epoch")]
+        best = [
+            (r, f)
+            for r, f in snap
+            if re.fullmatch(rf"best_epoch\d{{4}}_{self.RUN_ID}", r)
+        ]
         self.assertEqual(len(best), 1)
         self.assertTrue(any("recon" in name for name in best[0][1]))
 
@@ -239,9 +256,16 @@ class VisEpochsTest(unittest.TestCase):
             best_start=2,
         )
         dirs = self._dirs(snap)
-        self.assertNotIn("best_epoch0001", dirs)
+        self.assertNotIn(f"best_epoch0001_{self.RUN_ID}", dirs)
         self.assertEqual(
-            len([r for r in dirs if r.startswith("best_epoch")]), 1
+            len(
+                [
+                    r
+                    for r in dirs
+                    if re.fullmatch(rf"best_epoch\d{{4}}_{self.RUN_ID}", r)
+                ]
+            ),
+            1,
         )
 
     def test_vis_best_start_after_last_epoch(self):
@@ -255,7 +279,10 @@ class VisEpochsTest(unittest.TestCase):
             )
         self.assertTrue(any("after the last epoch" in m for m in cm.output))
         self.assertFalse(
-            any(r.startswith("best_epoch") for r in self._dirs(snap))
+            any(
+                re.fullmatch(rf"best_epoch\d{{4}}_{self.RUN_ID}", r)
+                for r in self._dirs(snap)
+            )
         )
 
     def test_vis_best_no_plots_enabled(self):
@@ -281,7 +308,10 @@ class VisEpochsTest(unittest.TestCase):
             )
         )
         self.assertFalse(
-            any(r.startswith("best_epoch") for r in self._dirs(snap))
+            any(
+                re.fullmatch(rf"best_epoch\d{{4}}_{self.RUN_ID}", r)
+                for r in self._dirs(snap)
+            )
         )
 
 

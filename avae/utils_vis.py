@@ -14,15 +14,24 @@ VECTOR_FORMATS = ("pdf", "svg", "eps")
 PLOTS_ROOT = "plots"
 _plots_dir = PLOTS_ROOT
 _copy_to: tuple[str, ...] = ()
+_run_id = ""  # run timestamp appended to epoch/best folders, set by set_run_id
+
+
+def set_run_id(run_id: str) -> None:
+    """Tag this run's epoch and best folders (e.g. with params.date_time_run)."""
+    global _run_id
+    _run_id = run_id
 
 
 def vis_dir(epoch: int | None = None, best: bool = False) -> str:
-    """Folder for per-epoch plots: plots/, plots/epochs/epoch_XXXX or plots/best_epochXXXX."""
+    """Folder for per-epoch plots: plots/, plots/epochs_<run id>/epoch_XXXX
+    or plots/best_epochXXXX_<run id>."""
+    suffix = f"_{_run_id}" if _run_id else ""
     if best:
-        return os.path.join(PLOTS_ROOT, f"best_epoch{epoch:04d}")
+        return os.path.join(PLOTS_ROOT, f"best_epoch{epoch:04d}{suffix}")
     if epoch is None:
         return PLOTS_ROOT
-    return os.path.join(PLOTS_ROOT, "epochs", f"epoch_{epoch:04d}")
+    return os.path.join(PLOTS_ROOT, f"epochs{suffix}", f"epoch_{epoch:04d}")
 
 
 def set_vis_dir(
@@ -49,8 +58,13 @@ def copy_saved(path: str | pathlib.Path) -> None:
 
 
 def clear_best_dirs() -> None:
-    """Remove any plots/best_epoch* folders so only the latest best is kept."""
-    for path in glob.glob(os.path.join(PLOTS_ROOT, "best_epoch*")):
+    """Remove this run's earlier best folder so only its latest is kept.
+    Other runs' and legacy untagged folders are left alone."""
+    suffix = f"_{_run_id}" if _run_id else ""
+    pattern = os.path.join(
+        PLOTS_ROOT, f"best_epoch[0-9][0-9][0-9][0-9]{glob.escape(suffix)}"
+    )
+    for path in glob.glob(pattern):
         shutil.rmtree(path, ignore_errors=True)
 
 

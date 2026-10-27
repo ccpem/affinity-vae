@@ -193,13 +193,15 @@ class AffinityConfig(pydantic.BaseModel):
     vis_epochs: bool = pydantic.Field(
         False,
         description="Also keep each epoch's plots in "
-        "plots/epochs/epoch_XXXX/; plots/ still holds the latest set",
+        "plots/epochs_<run timestamp>/epoch_XXXX/; plots/ still holds the "
+        "latest set",
     )
     vis_best: bool = pydantic.Field(
         False,
         description="Make every enabled per-epoch plot, regardless of freq_*, "
         "whenever the validation loss reaches a new best. Plots go to "
-        "plots/best_epochXXXX/ (only the latest best is kept) and are also "
+        "plots/best_epochXXXX_<run timestamp>/ (only this run's latest best "
+        "is kept; other runs' best folders are left alone) and are also "
         "copied to the normal plot location for that epoch",
     )
     best_start: pydantic.PositiveInt = pydantic.Field(

@@ -35,6 +35,7 @@ def train(params):
 
     # start from plots/ in case an earlier run in this process failed mid-epoch
     utils_vis.set_vis_dir(None)
+    utils_vis.set_run_id(params.date_time_run)
     lt.pytorch.seed_everything(42)
 
     # ############################### GPU SETUP ################################
@@ -825,3 +826,4 @@ def train(params):
         fabric.barrier()
 
     utils_vis.set_vis_dir(None)
+    utils_vis.set_run_id("")

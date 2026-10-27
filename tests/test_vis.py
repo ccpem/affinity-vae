@@ -203,6 +203,38 @@ class VisPipelineTest(unittest.TestCase):
 
     def tearDown(self) -> None:
         utils_vis.set_vis_dir(None)
+        utils_vis.set_run_id("")
+
+    def test_run_id_tags_dirs_and_clear_best_dirs_is_scoped(self):
+        original_cwd = os.getcwd()
+        with tempfile.TemporaryDirectory(prefix="avae-runid-") as temp_dir:
+            os.chdir(temp_dir)
+            try:
+                utils_vis.set_run_id("261027-0930")
+                self.assertEqual(
+                    utils_vis.vis_dir(5),
+                    "plots/epochs_261027-0930/epoch_0005",
+                )
+                self.assertEqual(
+                    utils_vis.vis_dir(12, best=True),
+                    "plots/best_epoch0012_261027-0930",
+                )
+                for d in (
+                    "best_epoch0012_261027-0930",
+                    "best_epoch0012_250101-0000",
+                    "best_epoch0012",
+                ):
+                    os.makedirs(os.path.join("plots", d))
+                utils_vis.clear_best_dirs()
+                self.assertFalse(
+                    os.path.exists("plots/best_epoch0012_261027-0930")
+                )
+                self.assertTrue(
+                    os.path.exists("plots/best_epoch0012_250101-0000")
+                )
+                self.assertTrue(os.path.exists("plots/best_epoch0012"))
+            finally:
+                os.chdir(original_cwd)
 
     def test_plots_dir_separates_per_epoch_plots(self):
         original_cwd = os.getcwd()
