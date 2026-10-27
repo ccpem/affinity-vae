@@ -128,8 +128,12 @@ class VisEpochsTest(unittest.TestCase):
         self.testdata_mrc = os.path.dirname(testdata_mrc.__file__)
         self.data_params = pipeline_params(self.testdata_mrc)
 
-    def _run(self, **overrides):
-        """Train in a temp dir; return a snapshot of (dir, files) under plots/."""
+    def _run(self, seed_files=(), **overrides):
+        """Train in a temp dir; return a snapshot of (dir, files) under plots/.
+
+        `seed_files` are paths (relative to the temp dir) created before
+        training to mimic leftovers from an earlier run.
+        """
         params = dict(self.data_params)
         params.update(overrides)
         data = config.load_config_params(local_args=params)
@@ -137,6 +141,9 @@ class VisEpochsTest(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix='avae-') as temp_dir:
             os.chdir(temp_dir)
             try:
+                for seed in seed_files:
+                    os.makedirs(os.path.dirname(seed), exist_ok=True)
+                    open(seed, "w").close()
                 run_pipeline(data)
                 return self._snapshot(temp_dir)
             finally:
@@ -193,6 +200,22 @@ class VisEpochsTest(unittest.TestCase):
         losses = [float(v[0]) for v in ckpt["v_loss_history"]]
         self.assertEqual(ckpt["best_epoch"], 1 + losses.index(min(losses)))
         self.assertAlmostEqual(ckpt["best_val_loss"], min(losses), places=5)
+
+    def test_stale_leftover_not_copied_to_plots(self):
+        # epoch 1 has no plots due; a stale file left in its folder by an
+        # earlier run must neither reach plots/ nor be deleted
+        stale = os.path.join("plots", "epochs", "epoch_0001", "stale.png")
+        snap = dict(
+            self._run(
+                seed_files=(stale,),
+                epochs=2,
+                vis_epochs=True,
+                vis_rec=True,
+                freq_rec=2,
+            )
+        )
+        self.assertNotIn("stale.png", snap["."])
+        self.assertIn("stale.png", snap[os.path.join("epochs", "epoch_0001")])
 
     def test_vis_int_without_eval_epoch(self):
         # z_test is only filled on freq_eval epochs; interpolation must not

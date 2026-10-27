@@ -23,6 +23,7 @@ from . import utils_learning
 from .utils_vis import (
     VECTOR_FORMATS,
     colour_per_class,
+    copy_saved,
     create_grid_for_plotting,
     fill_grid_for_plottting,
     latent_space_similarity_mat,
@@ -380,6 +381,8 @@ def _confusion_figure(
     os.makedirs(os.path.dirname(stem), exist_ok=True)
     pd.DataFrame(cm).to_csv(f"{stem}.csv", index=False)
     pd.DataFrame(cmn).to_csv(f"{stem}_norm.csv", index=False)
+    copy_saved(f"{stem}.csv")
+    copy_saved(f"{stem}_norm.csv")
 
     _matrix_figure(
         cmn,
@@ -864,9 +867,9 @@ def recon_plot(
             )
 
         save_mrc_file(f"recon_{mode}.mrc", grid_for_napari)
-        pd.DataFrame(reconstruction_index).to_csv(
-            plots_path(f"recon_{mode}.csv"), index=False
-        )
+        recon_csv = plots_path(f"recon_{mode}.csv")
+        pd.DataFrame(reconstruction_index).to_csv(recon_csv, index=False)
+        copy_saved(recon_csv)
 
 
 @_styled

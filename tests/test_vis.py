@@ -313,3 +313,41 @@ class VisPipelineTest(unittest.TestCase):
         self.assertFalse(
             any("e+" in title or "e-" in title for title in titles)
         )
+
+    def _save_in_temp(self, per_epoch, **vis_dir_kwargs):
+        """Save a figure in a temp dir; return the sorted plots/ file list."""
+        original_cwd = os.getcwd()
+        with tempfile.TemporaryDirectory(prefix="avae-copy-") as temp_dir:
+            os.chdir(temp_dir)
+            try:
+                utils_vis.set_vis_dir(**vis_dir_kwargs)
+                fig = vis.plt.figure()
+                utils_vis.save_figure(
+                    fig,
+                    utils_vis.plots_path("a.png", per_epoch=per_epoch),
+                    "png",
+                )
+                return sorted(
+                    os.path.relpath(os.path.join(root, f), temp_dir)
+                    for root, _, files in os.walk("plots")
+                    for f in files
+                )
+            finally:
+                os.chdir(original_cwd)
+
+    def test_save_figure_copies_to_copy_to(self):
+        found = self._save_in_temp(True, epoch=3, copy_to=("plots",))
+        self.assertEqual(
+            found,
+            ["plots/a.png", "plots/epochs/epoch_0003/a.png"],
+        )
+
+    def test_non_per_epoch_file_not_copied(self):
+        found = self._save_in_temp(
+            False, epoch=3, copy_to=("plots", "elsewhere")
+        )
+        self.assertEqual(found, ["plots/a.png"])
+
+    def test_no_copy_without_epoch_dir(self):
+        found = self._save_in_temp(True, epoch=None)
+        self.assertEqual(found, ["plots/a.png"])

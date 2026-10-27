@@ -1,6 +1,5 @@
 import logging
 import os
-import shutil
 
 import lightning as lt
 import numpy as np
@@ -466,12 +465,22 @@ def train(params):
 
         # ########################## VISUALISE ################################
         if is_best:
-            # render everything once into the best folder, keeping only the latest
+            # save into the best folder (keeping only the latest), copying
+            # each file to the epoch folder and plots/ as it is saved
             if rank_zero:
                 utils_vis.clear_best_dirs()
-            utils_vis.set_vis_dir(epoch + 1, best=True)
+            copy_to = []
+            if params.vis_epochs:
+                copy_to.append(utils_vis.vis_dir(epoch + 1))
+            copy_to.append(utils_vis.vis_dir(None))
+            utils_vis.set_vis_dir(epoch + 1, best=True, copy_to=tuple(copy_to))
+        elif params.vis_epochs:
+            # save into the epoch folder, copying each file to plots/
+            utils_vis.set_vis_dir(
+                epoch + 1, copy_to=(utils_vis.vis_dir(None),)
+            )
         else:
-            utils_vis.set_vis_dir(epoch + 1 if params.vis_epochs else None)
+            utils_vis.set_vis_dir(None)
         logging.info("")
 
         static_embedding_due = (
@@ -758,18 +767,6 @@ def train(params):
                 vis_format=params.vis_format,
                 vis_print=params.vis_print,
             )
-        # plots were saved once into the best or epoch folder; copy them so
-        # the epoch folder (on best epochs) and plots/ hold the latest set
-        source = utils_vis.vis_dir(epoch + 1, best=is_best)
-        targets = []
-        if is_best and params.vis_epochs:
-            targets.append(utils_vis.vis_dir(epoch + 1))
-        if is_best or params.vis_epochs:
-            targets.append(utils_vis.vis_dir(None))
-        if rank_zero and os.path.isdir(source):
-            for target in targets:
-                shutil.copytree(source, target, dirs_exist_ok=True)
-
         # ########################## SAVE STATE ###############################
         if params.freq_sta != 0 and (epoch + 1) % params.freq_sta == 0:
             if rank_zero:

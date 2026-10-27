@@ -13,6 +13,7 @@ SCREEN_HEIGHT_PX = 720  # top half of a 1440p screen
 VECTOR_FORMATS = ("pdf", "svg", "eps")
 PLOTS_ROOT = "plots"
 _plots_dir = PLOTS_ROOT
+_copy_to: tuple[str, ...] = ()
 
 
 def vis_dir(epoch: int | None = None, best: bool = False) -> str:
@@ -24,10 +25,27 @@ def vis_dir(epoch: int | None = None, best: bool = False) -> str:
     return os.path.join(PLOTS_ROOT, "epochs", f"epoch_{epoch:04d}")
 
 
-def set_vis_dir(epoch: int | None = None, best: bool = False) -> None:
-    """Direct per-epoch plots to vis_dir(epoch, best) (None resets to plots/)."""
-    global _plots_dir
+def set_vis_dir(
+    epoch: int | None = None,
+    best: bool = False,
+    copy_to: tuple[str, ...] = (),
+) -> None:
+    """Direct per-epoch plots to vis_dir(epoch, best) (None resets to plots/).
+
+    Each per-epoch file saved there is also copied to the `copy_to` folders.
+    """
+    global _plots_dir, _copy_to
     _plots_dir = vis_dir(epoch, best)
+    _copy_to = tuple(copy_to)
+
+
+def copy_saved(path: str | pathlib.Path) -> None:
+    """Copy a just-saved per-epoch file to the folders set by set_vis_dir."""
+    if os.path.dirname(os.fspath(path)) != _plots_dir:
+        return
+    for target in _copy_to:
+        os.makedirs(target, exist_ok=True)
+        shutil.copy2(path, target)
 
 
 def clear_best_dirs() -> None:
@@ -133,6 +151,7 @@ def save_figure(
         kwargs["pil_kwargs"] = {"compress_level": 3}
     fig.savefig(path, **kwargs)
     plt.close(fig)
+    copy_saved(path)
 
 
 def save_imshow_png(
@@ -164,8 +183,10 @@ def save_imshow_png(
 
 
 def save_mrc_file(fname: str, array: npt.NDArray) -> None:
-    with mrcfile.new(plots_path(fname), overwrite=True) as mrc:
+    path = plots_path(fname)
+    with mrcfile.new(path, overwrite=True) as mrc:
         mrc.set_data(array)
+    copy_saved(path)
 
 
 def colour_per_class(classes: list) -> list:
