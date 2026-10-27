@@ -208,6 +208,8 @@ class VisEpochsTest(unittest.TestCase):
         losses = [float(v[0]) for v in ckpt["v_loss_history"]]
         self.assertEqual(ckpt["best_epoch"], 1 + losses.index(min(losses)))
         self.assertAlmostEqual(ckpt["best_val_loss"], min(losses), places=5)
+        self.assertIsNotNone(ckpt["best_val_acc"])
+        self.assertIn(ckpt["best_acc_epoch"], (1, 2, 3))
 
     def test_stale_leftover_not_copied_to_plots(self):
         # epoch 1 has no plots due; a stale file left in its folder by an
@@ -235,17 +237,31 @@ class VisEpochsTest(unittest.TestCase):
         # try to concatenate it on other epochs.
         self._run(epochs=2, vis_int=True, freq_int=1, freq_eval=10)
 
-    def test_vis_best_single_folder(self):
-        snap = self._run(
-            epochs=3, vis_best=True, vis_rec=True, freq_rec=10, best_start=1
-        )
-        best = [
-            (r, f)
-            for r, f in snap
-            if re.fullmatch(rf"best_epoch\d{{4}}_{self.RUN_ID}", r)
+    def _best_dirs(self, dirs, kind=None):
+        kinds = kind or "(?:loss|acc)"
+        return [
+            r
+            for r in dirs
+            if re.fullmatch(rf"best_{kinds}_epoch\d{{4}}_{self.RUN_ID}", r)
         ]
-        self.assertEqual(len(best), 1)
-        self.assertTrue(any("recon" in name for name in best[0][1]))
+
+    def test_vis_best_single_folder_per_kind(self):
+        with self.assertLogs(level="INFO") as cm:
+            snap = self._run(
+                epochs=3,
+                vis_best=True,
+                vis_rec=True,
+                freq_rec=10,
+                best_start=1,
+            )
+        snap = dict(snap)
+        for kind in ("loss", "acc"):
+            best = self._best_dirs(snap, kind)
+            self.assertEqual(len(best), 1, best)
+            self.assertTrue(any("recon" in name for name in snap[best[0]]))
+        lines = [m for m in cm.output if "Validation : Epoch" in m]
+        self.assertNotIn("| Best:", lines[0])
+        self.assertRegex(lines[-1], r"\| Best: \d+ \d+% acc, \d+ loss$")
 
     def test_vis_best_respects_best_start(self):
         snap = self._run(
@@ -256,17 +272,9 @@ class VisEpochsTest(unittest.TestCase):
             best_start=2,
         )
         dirs = self._dirs(snap)
-        self.assertNotIn(f"best_epoch0001_{self.RUN_ID}", dirs)
-        self.assertEqual(
-            len(
-                [
-                    r
-                    for r in dirs
-                    if re.fullmatch(rf"best_epoch\d{{4}}_{self.RUN_ID}", r)
-                ]
-            ),
-            1,
-        )
+        for kind in ("loss", "acc"):
+            self.assertNotIn(f"best_{kind}_epoch0001_{self.RUN_ID}", dirs)
+            self.assertEqual(len(self._best_dirs(dirs, kind)), 1)
 
     def test_vis_best_start_after_last_epoch(self):
         with self.assertLogs(level="WARNING") as cm:
@@ -278,12 +286,7 @@ class VisEpochsTest(unittest.TestCase):
                 best_start=10,
             )
         self.assertTrue(any("after the last epoch" in m for m in cm.output))
-        self.assertFalse(
-            any(
-                re.fullmatch(rf"best_epoch\d{{4}}_{self.RUN_ID}", r)
-                for r in self._dirs(snap)
-            )
-        )
+        self.assertFalse(self._best_dirs(self._dirs(snap)))
 
     def test_vis_best_no_plots_enabled(self):
         off = {
@@ -307,12 +310,7 @@ class VisEpochsTest(unittest.TestCase):
                 for m in cm.output
             )
         )
-        self.assertFalse(
-            any(
-                re.fullmatch(rf"best_epoch\d{{4}}_{self.RUN_ID}", r)
-                for r in self._dirs(snap)
-            )
-        )
+        self.assertFalse(self._best_dirs(self._dirs(snap)))
 
 
 def helper_train_eval(

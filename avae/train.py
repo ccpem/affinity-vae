@@ -167,6 +167,8 @@ def train(params):
     v_history = []
     best_val_loss = float("inf")
     best_epoch = None  # 1-based epoch of best_val_loss
+    best_val_acc = None  # best validation accuracy so far
+    best_acc_epoch = None  # 1-based epoch of best_val_acc
     if params.vis_best and not any(
         getattr(params, f"vis_{name}")
         for name in (
@@ -209,6 +211,9 @@ def train(params):
         if params.vis_best and checkpoint.get("best_val_loss") is not None:
             best_val_loss = float(checkpoint["best_val_loss"])
             best_epoch = checkpoint.get("best_epoch")
+        if params.vis_best and checkpoint.get("best_val_acc") is not None:
+            best_val_acc = float(checkpoint["best_val_acc"])
+            best_acc_epoch = checkpoint.get("best_acc_epoch")
         tracked = v_history[params.best_start - 1 :]
         losses = [float(v[0]) for v in tracked]
         if (
@@ -343,26 +348,89 @@ def train(params):
                 t = fabric.all_reduce(t, reduce_op="sum")
                 global_val_loss = float(t[0] / t[1])
 
+            # best before this epoch, shown at the end of the validation log
+            last_best_parts = []
+            if best_acc_epoch is not None and best_val_acc is not None:
+                last_best_parts.append(
+                    "%d %.0f%% acc" % (best_acc_epoch, 100 * best_val_acc)
+                )
+            if best_epoch is not None:
+                last_best_parts.append("%d loss" % best_epoch)
+            last_best = (
+                " | Best: " + ", ".join(last_best_parts)
+                if params.vis_best and last_best_parts
+                else ""
+            )
+
             # lowest validation total loss so far (only tracked with vis_best),
             # computed over all ranks so all take the same plotting branches
-            is_best = bool(
+            is_best_loss = bool(
                 params.vis_best
                 and epoch + 1 >= params.best_start
                 and global_val_loss < best_val_loss
             )
-            if is_best:
+            if is_best_loss:
                 best_val_loss = global_val_loss
                 best_epoch = epoch + 1
 
+            # accuracy every epoch from best_start (collective gather on all
+            # ranks); reused by the vis_acc block below
+            acc_cache = None
+            is_best_acc = False
+            if params.vis_best and epoch + 1 >= params.best_start:
+                acc_gathered = utils_learning.combine_accuracy_data(
+                    z_train,
+                    y_train,
+                    z_val,
+                    y_val,
+                    rank_zero=rank_zero,
+                    world_size=fabric.world_size,
+                )
+                acc_val = 0.0
+                if rank_zero:
+                    assert acc_gathered is not None
+                    (
+                        acc_train,
+                        acc_val,
+                        _,
+                        acc_ypred_train,
+                        acc_ypred_val,
+                    ) = utils_learning.accuracy(
+                        acc_gathered[0],
+                        acc_gathered[1],
+                        acc_gathered[2],
+                        acc_gathered[3],
+                        classifier=params.classifier,
+                    )
+                    acc_cache = (
+                        acc_gathered,
+                        acc_train,
+                        acc_val,
+                        acc_ypred_train,
+                        acc_ypred_val,
+                    )
+                acc_val = float(
+                    fabric.broadcast(
+                        torch.tensor(float(acc_val), device=fabric.device),
+                        src=0,
+                    )
+                )
+                is_best_acc = best_val_acc is None or acc_val > best_val_acc
+                if is_best_acc:
+                    best_val_acc = acc_val
+                    best_acc_epoch = epoch + 1
+            is_best = is_best_loss or is_best_acc
+
             logging.info(
                 "Validation : Epoch: [%d/%d] | Loss: %f | Recon: %f | "
-                "KLdiv: %f | Affin: %f | Beta: %f | Gamma: %f"
+                "KLdiv: %f | Affin: %f | Beta: %f | Gamma: %f%s"
                 % (
                     epoch + 1,
                     params.epochs,
                     *v_history[-1],
                     beta_arr[epoch],
                     gamma_arr[epoch],
+                    last_best,
                 )
             )
 
@@ -466,15 +534,24 @@ def train(params):
 
         # ########################## VISUALISE ################################
         if is_best:
-            # save into the best folder (keeping only the latest), copying
-            # each file to the epoch folder and plots/ as it is saved
+            # save into the best folder (keeping only the latest of each
+            # kind), copying each file to the other best folder, the epoch
+            # folder and plots/ as it is saved
+            kinds = [
+                k
+                for k, new in (("loss", is_best_loss), ("acc", is_best_acc))
+                if new
+            ]
             if rank_zero:
-                utils_vis.clear_best_dirs()
-            copy_to = []
+                for kind in kinds:
+                    utils_vis.clear_best_dirs(kind)
+            copy_to = [utils_vis.vis_dir(epoch + 1, best=k) for k in kinds[1:]]
             if params.vis_epochs:
                 copy_to.append(utils_vis.vis_dir(epoch + 1))
             copy_to.append(utils_vis.vis_dir(None))
-            utils_vis.set_vis_dir(epoch + 1, best=True, copy_to=tuple(copy_to))
+            utils_vis.set_vis_dir(
+                epoch + 1, best=kinds[0], copy_to=tuple(copy_to)
+            )
         elif params.vis_epochs:
             # save into the epoch folder, copying each file to plots/
             utils_vis.set_vis_dir(
@@ -515,14 +592,22 @@ def train(params):
             (params.freq_acc != 0 and (epoch + 1) % params.freq_acc == 0)
             or is_best
         ):
-            combined_accuracy_data = utils_learning.combine_accuracy_data(
-                z_train,
-                y_train,
-                z_val,
-                y_val,
-                rank_zero=rank_zero,
-                world_size=fabric.world_size,
-            )
+            if acc_cache is not None or (
+                params.vis_best and epoch + 1 >= params.best_start
+            ):
+                # already gathered and computed for best tracking
+                combined_accuracy_data = (
+                    acc_cache[0] if acc_cache is not None else None
+                )
+            else:
+                combined_accuracy_data = utils_learning.combine_accuracy_data(
+                    z_train,
+                    y_train,
+                    z_val,
+                    y_val,
+                    rank_zero=rank_zero,
+                    world_size=fabric.world_size,
+                )
 
             if rank_zero:
                 assert combined_accuracy_data is not None
@@ -532,19 +617,22 @@ def train(params):
                     z_val_all,
                     y_val_all,
                 ) = combined_accuracy_data
-                (
-                    train_acc,
-                    val_acc,
-                    _,
-                    ypred_train,
-                    ypred_val,
-                ) = utils_learning.accuracy(
-                    z_train_all,
-                    y_train_all,
-                    z_val_all,
-                    y_val_all,
-                    classifier=params.classifier,
-                )
+                if acc_cache is not None:
+                    _, train_acc, val_acc, ypred_train, ypred_val = acc_cache
+                else:
+                    (
+                        train_acc,
+                        val_acc,
+                        _,
+                        ypred_train,
+                        ypred_val,
+                    ) = utils_learning.accuracy(
+                        z_train_all,
+                        y_train_all,
+                        z_val_all,
+                        y_val_all,
+                        classifier=params.classifier,
+                    )
 
                 logging.info(
                     "------------------->>> Overall accuracy: Train: %f | Val: %f\n"
@@ -802,6 +890,8 @@ def train(params):
                             best_val_loss if best_epoch is not None else None
                         ),
                         "best_epoch": best_epoch,
+                        "best_val_acc": best_val_acc,
+                        "best_acc_epoch": best_acc_epoch,
                     },
                     os.path.join("states", mname),
                 )

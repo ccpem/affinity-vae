@@ -23,20 +23,22 @@ def set_run_id(run_id: str) -> None:
     _run_id = run_id
 
 
-def vis_dir(epoch: int | None = None, best: bool = False) -> str:
-    """Folder for per-epoch plots: plots/, plots/epochs_<run id>/epoch_XXXX
-    or plots/best_epochXXXX_<run id>."""
-    suffix = f"_{_run_id}" if _run_id else ""
-    if best:
-        return os.path.join(PLOTS_ROOT, f"best_epoch{epoch:04d}{suffix}")
+def vis_dir(epoch: int | None = None, best: str | None = None) -> str:
+    """Folder for per-epoch plots: plots/, plots/epochs_<run id>/epoch_XXXX,
+    or for best="loss"/"acc" plots/best_<kind>_epochXXXX_<run id>."""
     if epoch is None:
         return PLOTS_ROOT
+    suffix = f"_{_run_id}" if _run_id else ""
+    if best:
+        return os.path.join(
+            PLOTS_ROOT, f"best_{best}_epoch{epoch:04d}{suffix}"
+        )
     return os.path.join(PLOTS_ROOT, f"epochs{suffix}", f"epoch_{epoch:04d}")
 
 
 def set_vis_dir(
     epoch: int | None = None,
-    best: bool = False,
+    best: str | None = None,
     copy_to: tuple[str, ...] = (),
 ) -> None:
     """Direct per-epoch plots to vis_dir(epoch, best) (None resets to plots/).
@@ -57,12 +59,13 @@ def copy_saved(path: str | pathlib.Path) -> None:
         shutil.copy2(path, target)
 
 
-def clear_best_dirs() -> None:
-    """Remove this run's earlier best folder so only its latest is kept.
-    Other runs' and legacy untagged folders are left alone."""
+def clear_best_dirs(kind: str) -> None:
+    """Remove this run's earlier best folder of `kind` ("loss" or "acc") so
+    only its latest is kept. Other runs' and legacy folders are left alone."""
     suffix = f"_{_run_id}" if _run_id else ""
     pattern = os.path.join(
-        PLOTS_ROOT, f"best_epoch[0-9][0-9][0-9][0-9]{glob.escape(suffix)}"
+        PLOTS_ROOT,
+        f"best_{kind}_epoch[0-9][0-9][0-9][0-9]{glob.escape(suffix)}",
     )
     for path in glob.glob(pattern):
         shutil.rmtree(path, ignore_errors=True)

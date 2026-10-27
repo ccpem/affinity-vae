@@ -199,10 +199,13 @@ class AffinityConfig(pydantic.BaseModel):
     vis_best: bool = pydantic.Field(
         False,
         description="Make every enabled per-epoch plot, regardless of freq_*, "
-        "whenever the validation loss reaches a new best. Plots go to "
-        "plots/best_epochXXXX_<run timestamp>/ (only this run's latest best "
-        "is kept; other runs' best folders are left alone) and are also "
-        "copied to the normal plot location for that epoch",
+        "whenever the validation loss or the validation accuracy reaches a "
+        "new best (from best_start; accuracy is computed every epoch from "
+        "best_start). Plots go to plots/best_loss_epochXXXX_<run timestamp>/ "
+        "(best validation loss) and plots/best_acc_epochXXXX_<run timestamp>/ "
+        "(best validation accuracy); only this run's latest folder of each "
+        "kind is kept and other runs' best folders are left alone. Plots are "
+        "also copied to the normal plot location for that epoch",
     )
     best_start: pydantic.PositiveInt = pydantic.Field(
         10,

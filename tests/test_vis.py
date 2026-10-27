@@ -216,23 +216,35 @@ class VisPipelineTest(unittest.TestCase):
                     "plots/epochs_261027-0930/epoch_0005",
                 )
                 self.assertEqual(
-                    utils_vis.vis_dir(12, best=True),
-                    "plots/best_epoch0012_261027-0930",
+                    utils_vis.vis_dir(12, best="loss"),
+                    "plots/best_loss_epoch0012_261027-0930",
+                )
+                self.assertEqual(
+                    utils_vis.vis_dir(12, best="acc"),
+                    "plots/best_acc_epoch0012_261027-0930",
                 )
                 for d in (
-                    "best_epoch0012_261027-0930",
-                    "best_epoch0012_250101-0000",
+                    "best_loss_epoch0012_261027-0930",
+                    "best_acc_epoch0012_261027-0930",
+                    "best_loss_epoch0012_250101-0000",
                     "best_epoch0012",
                 ):
                     os.makedirs(os.path.join("plots", d))
-                utils_vis.clear_best_dirs()
+                utils_vis.clear_best_dirs("loss")
                 self.assertFalse(
-                    os.path.exists("plots/best_epoch0012_261027-0930")
+                    os.path.exists("plots/best_loss_epoch0012_261027-0930")
                 )
                 self.assertTrue(
-                    os.path.exists("plots/best_epoch0012_250101-0000")
+                    os.path.exists("plots/best_acc_epoch0012_261027-0930")
+                )
+                self.assertTrue(
+                    os.path.exists("plots/best_loss_epoch0012_250101-0000")
                 )
                 self.assertTrue(os.path.exists("plots/best_epoch0012"))
+                utils_vis.clear_best_dirs("acc")
+                self.assertFalse(
+                    os.path.exists("plots/best_acc_epoch0012_261027-0930")
+                )
             finally:
                 os.chdir(original_cwd)
 
@@ -279,13 +291,13 @@ class VisPipelineTest(unittest.TestCase):
             try:
                 utils_vis.set_vis_dir(3)
                 epoch_path = utils_vis.plots_path("a.png")
-                utils_vis.set_vis_dir(3, best=True)
+                utils_vis.set_vis_dir(3, best="loss")
                 best_path = utils_vis.plots_path("a.png")
             finally:
                 os.chdir(original_cwd)
 
         self.assertEqual(epoch_path, "plots/epochs/epoch_0003/a.png")
-        self.assertEqual(best_path, "plots/best_epoch0003/a.png")
+        self.assertEqual(best_path, "plots/best_loss_epoch0003/a.png")
 
     def test_loss_plot_writes_both_views(self):
         original_cwd = os.getcwd()
