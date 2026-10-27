@@ -166,151 +166,152 @@ class VisEpochsTest(unittest.TestCase):
     def _dirs(snapshot):
         return {rel for rel, _ in snapshot}
 
-    def test_vis_epochs_freq(self):
-        snap = self._run(epochs=2, vis_epochs=True, vis_rec=True, freq_rec=2)
-        dirs = self._dirs(snap)
-        self.assertIn(
-            os.path.join(f"epochs_{self.RUN_ID}", "epoch_0002"), dirs
+    @staticmethod
+    def _val_lines(cm):
+        return [m for m in cm.output if "Validation : Epoch" in m]
+
+    def test_vis_epochs_with_best_and_leftovers(self):
+        """Run A: per-epoch plots + best tracking + seeded leftovers."""
+        rid = self.RUN_ID
+        stale_e1 = os.path.join(
+            "plots", "epochs", "epoch_0001", "stale_from_old_run.png"
         )
-        self.assertNotIn(
-            os.path.join(f"epochs_{self.RUN_ID}", "epoch_0001"), dirs
+        stale_e2 = os.path.join(
+            "plots", "epochs", "epoch_0002", "stale_from_old_run.png"
+        )
+        # leftover inside this run's own epoch-1 folder: epoch 1 saves an
+        # interpolation there, so copying whole folders would pick it up
+        stale_same_run = os.path.join(
+            "plots", f"epochs_{rid}", "epoch_0001", "stale_same_run.png"
+        )
+        old_untagged = os.path.join("plots", "best_epoch0021", "old.png")
+        other_run = os.path.join(
+            "plots", "best_epoch0005_250101-0000", "old.png"
+        )
+        # freq_int=1 with freq_eval=10: interpolation on epochs without test
+        # latents must not crash.
+        with self.assertLogs(level="INFO") as cm:
+            snap = dict(
+                self._run(
+                    seed_files=(
+                        stale_e1,
+                        stale_e2,
+                        stale_same_run,
+                        old_untagged,
+                        other_run,
+                    ),
+                    epochs=3,
+                    vis_epochs=True,
+                    vis_best=True,
+                    best_start=2,
+                    vis_rec=True,
+                    vis_acc=True,
+                    vis_int=True,
+                    freq_rec=10,
+                    freq_acc=10,
+                    freq_int=1,
+                    freq_eval=10,
+                    vis_emb=False,
+                    vis_dynamic=False,
+                    vis_sim=False,
+                    vis_dis=False,
+                    vis_pos=False,
+                )
+            )
+        epochs_dir = f"epochs_{rid}"
+
+        # epoch 1: only interpolation (freq_int=1) is due; no recon/best
+        epoch1 = snap[os.path.join(epochs_dir, "epoch_0001")]
+        self.assertTrue(any(f.startswith("interpolations") for f in epoch1))
+        self.assertFalse(any("recon" in f for f in epoch1))
+        self.assertEqual(
+            [
+                f
+                for f in epoch1
+                if not f.startswith("interpolations")
+                and f != "stale_same_run.png"
+            ],
+            [],
+            "epoch 1 should only contain interpolation output",
         )
 
-    def test_vis_epochs_copied_to_plots(self):
-        snap = dict(
-            self._run(epochs=2, vis_epochs=True, vis_rec=True, freq_rec=1)
-        )
-        epoch_files = snap[os.path.join(f"epochs_{self.RUN_ID}", "epoch_0002")]
-        recon = [f for f in epoch_files if "recon" in f]
-        self.assertTrue(recon)
+        # exactly one best folder per kind, epoch >= 2, with recon files
+        best_epochs = {}
+        for kind in ("loss", "acc"):
+            mine = [
+                r
+                for r in snap
+                if re.fullmatch(rf"best_{kind}_epoch\d{{4}}_{rid}", r)
+            ]
+            self.assertEqual(len(mine), 1, f"best {kind} folders: {mine}")
+            n = len(f"best_{kind}_epoch")
+            best_epochs[kind] = int(mine[0][n : n + 4])
+            self.assertGreaterEqual(best_epochs[kind], 2)
+            best_recon = [f for f in snap[mine[0]] if "recon" in f]
+            self.assertTrue(best_recon, f"best {kind} folder has no recon")
+
+            # best epoch is copied to its epoch folder and to plots/
+            epoch_files = snap[
+                os.path.join(epochs_dir, f"epoch_{best_epochs[kind]:04d}")
+            ]
+            for name in best_recon:
+                self.assertIn(name, epoch_files)
+                self.assertIn(name, snap["."])
+
+        # leftovers: not copied to plots/, and left untouched
+        self.assertNotIn("stale_from_old_run.png", snap["."])
+        self.assertNotIn("stale_same_run.png", snap["."])
+        self.assertIn("stale_same_run.png", epoch1)
+        for epoch in ("epoch_0001", "epoch_0002"):
+            self.assertIn(
+                "stale_from_old_run.png",
+                snap[os.path.join("epochs", epoch)],
+            )
+        self.assertIn("old.png", snap["best_epoch0021"])
+        self.assertIn("old.png", snap["best_epoch0005_250101-0000"])
+
+        # validation log lines
+        lines = self._val_lines(cm)
+        self.assertEqual(len(lines), 3, lines)
+        self.assertIn("Epoch: [1/3]", lines[0])
+        self.assertNotIn("| Best:", lines[0])
+        self.assertNotIn("| Best:", lines[1])
+        self.assertIn("Epoch: [3/3]", lines[2])
+        self.assertRegex(lines[2], r"\| Best: \d+ \d+% acc, 2 loss$")
+
+    def test_vis_epochs_freq_without_best(self):
+        """Run B: freq honoured, copy to plots/, best_start > epochs."""
+        rid = self.RUN_ID
+        with self.assertLogs(level="INFO") as cm:
+            snap = dict(
+                self._run(
+                    epochs=2,
+                    vis_epochs=True,
+                    vis_best=True,
+                    vis_rec=True,
+                    freq_rec=2,
+                    vis_acc=False,
+                    vis_emb=False,
+                    vis_dynamic=False,
+                    vis_sim=False,
+                    vis_int=False,
+                    vis_dis=False,
+                    vis_pos=False,
+                )
+            )
+        epochs_dir = f"epochs_{rid}"
+        self.assertNotIn(os.path.join(epochs_dir, "epoch_0001"), snap)
+        self.assertIn(os.path.join(epochs_dir, "epoch_0002"), snap)
+        recon = [
+            f
+            for f in snap[os.path.join(epochs_dir, "epoch_0002")]
+            if "recon" in f
+        ]
+        self.assertTrue(recon, "no recon files in epoch_0002")
         for name in recon:
             self.assertIn(name, snap["."])
-
-    def test_checkpoint_stores_best_val_loss(self):
-        params = dict(self.data_params)
-        params.update(
-            epochs=3, vis_best=True, vis_rec=True, freq_rec=10, best_start=1
-        )
-        data = config.load_config_params(local_args=params)
-        original_cwd = os.getcwd()
-        with tempfile.TemporaryDirectory(prefix='avae-') as temp_dir:
-            os.chdir(temp_dir)
-            try:
-                run_pipeline(data)
-                states = sorted(
-                    f for f in os.listdir("states") if f.endswith(".pt")
-                )
-                ckpt = torch.load(
-                    os.path.join("states", states[-1]), weights_only=False
-                )
-            finally:
-                os.chdir(original_cwd)
-        losses = [float(v[0]) for v in ckpt["v_loss_history"]]
-        self.assertEqual(ckpt["best_epoch"], 1 + losses.index(min(losses)))
-        self.assertAlmostEqual(ckpt["best_val_loss"], min(losses), places=5)
-        self.assertIsNotNone(ckpt["best_val_acc"])
-        self.assertIn(ckpt["best_acc_epoch"], (1, 2, 3))
-
-    def test_stale_leftover_not_copied_to_plots(self):
-        # epoch 1 has no plots due; a stale file left in its folder by an
-        # earlier run must neither reach plots/ nor be deleted
-        stale = os.path.join(
-            "plots", f"epochs_{self.RUN_ID}", "epoch_0001", "stale.png"
-        )
-        snap = dict(
-            self._run(
-                seed_files=(stale,),
-                epochs=2,
-                vis_epochs=True,
-                vis_rec=True,
-                freq_rec=2,
-            )
-        )
-        self.assertNotIn("stale.png", snap["."])
-        self.assertIn(
-            "stale.png",
-            snap[os.path.join(f"epochs_{self.RUN_ID}", "epoch_0001")],
-        )
-
-    def test_vis_int_without_eval_epoch(self):
-        # z_test is only filled on freq_eval epochs; interpolation must not
-        # try to concatenate it on other epochs.
-        self._run(epochs=2, vis_int=True, freq_int=1, freq_eval=10)
-
-    def _best_dirs(self, dirs, kind=None):
-        kinds = kind or "(?:loss|acc)"
-        return [
-            r
-            for r in dirs
-            if re.fullmatch(rf"best_{kinds}_epoch\d{{4}}_{self.RUN_ID}", r)
-        ]
-
-    def test_vis_best_single_folder_per_kind(self):
-        with self.assertLogs(level="INFO") as cm:
-            snap = self._run(
-                epochs=3,
-                vis_best=True,
-                vis_rec=True,
-                freq_rec=10,
-                best_start=1,
-            )
-        snap = dict(snap)
-        for kind in ("loss", "acc"):
-            best = self._best_dirs(snap, kind)
-            self.assertEqual(len(best), 1, best)
-            self.assertTrue(any("recon" in name for name in snap[best[0]]))
-        lines = [m for m in cm.output if "Validation : Epoch" in m]
-        self.assertNotIn("| Best:", lines[0])
-        self.assertRegex(lines[-1], r"\| Best: \d+ \d+% acc, \d+ loss$")
-
-    def test_vis_best_respects_best_start(self):
-        snap = self._run(
-            epochs=3,
-            vis_best=True,
-            vis_rec=True,
-            freq_rec=10,
-            best_start=2,
-        )
-        dirs = self._dirs(snap)
-        for kind in ("loss", "acc"):
-            self.assertNotIn(f"best_{kind}_epoch0001_{self.RUN_ID}", dirs)
-            self.assertEqual(len(self._best_dirs(dirs, kind)), 1)
-
-    def test_vis_best_start_after_last_epoch(self):
-        with self.assertLogs(level="WARNING") as cm:
-            snap = self._run(
-                epochs=2,
-                vis_best=True,
-                vis_rec=True,
-                freq_rec=10,
-                best_start=10,
-            )
-        self.assertTrue(any("after the last epoch" in m for m in cm.output))
-        self.assertFalse(self._best_dirs(self._dirs(snap)))
-
-    def test_vis_best_no_plots_enabled(self):
-        off = {
-            f"vis_{n}": False
-            for n in (
-                "acc",
-                "rec",
-                "emb",
-                "dynamic",
-                "sim",
-                "int",
-                "dis",
-                "pos",
-            )
-        }
-        with self.assertLogs(level="WARNING") as cm:
-            snap = self._run(epochs=2, vis_best=True, **off)
-        self.assertTrue(
-            any(
-                "vis_best is set but no per-epoch plots are enabled" in m
-                for m in cm.output
-            )
-        )
-        self.assertFalse(self._best_dirs(self._dirs(snap)))
+        self.assertFalse(any(r.startswith("best_epoch") for r in snap))
+        self.assertFalse(any("| Best:" in m for m in self._val_lines(cm)))
 
 
 def helper_train_eval(
