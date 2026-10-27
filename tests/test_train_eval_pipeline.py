@@ -171,6 +171,29 @@ class VisEpochsTest(unittest.TestCase):
         for name in recon:
             self.assertIn(name, snap["."])
 
+    def test_checkpoint_stores_best_val_loss(self):
+        params = dict(self.data_params)
+        params.update(
+            epochs=3, vis_best=True, vis_rec=True, freq_rec=10, best_start=1
+        )
+        data = config.load_config_params(local_args=params)
+        original_cwd = os.getcwd()
+        with tempfile.TemporaryDirectory(prefix='avae-') as temp_dir:
+            os.chdir(temp_dir)
+            try:
+                run_pipeline(data)
+                states = sorted(
+                    f for f in os.listdir("states") if f.endswith(".pt")
+                )
+                ckpt = torch.load(
+                    os.path.join("states", states[-1]), weights_only=False
+                )
+            finally:
+                os.chdir(original_cwd)
+        losses = [float(v[0]) for v in ckpt["v_loss_history"]]
+        self.assertEqual(ckpt["best_epoch"], 1 + losses.index(min(losses)))
+        self.assertAlmostEqual(ckpt["best_val_loss"], min(losses), places=5)
+
     def test_vis_int_without_eval_epoch(self):
         # z_test is only filled on freq_eval epochs; interpolation must not
         # try to concatenate it on other epochs.

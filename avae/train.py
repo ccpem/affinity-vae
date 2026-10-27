@@ -166,6 +166,7 @@ def train(params):
     t_history = []
     v_history = []
     best_val_loss = float("inf")
+    best_epoch = None  # 1-based epoch of best_val_loss
     if params.vis_best and not any(
         getattr(params, f"vis_{name}")
         for name in (
@@ -205,9 +206,18 @@ def train(params):
         e_start = checkpoint["epoch"]
         t_history = checkpoint["t_loss_history"]
         v_history = checkpoint["v_loss_history"]
+        if params.vis_best and checkpoint.get("best_val_loss") is not None:
+            best_val_loss = float(checkpoint["best_val_loss"])
+            best_epoch = checkpoint.get("best_epoch")
         tracked = v_history[params.best_start - 1 :]
-        if params.vis_best and len(tracked) > 0:
-            best_val_loss = float(np.nanmin([float(v[0]) for v in tracked]))
+        losses = [float(v[0]) for v in tracked]
+        if (
+            params.vis_best
+            and checkpoint.get("best_val_loss") is None
+            and not np.all(np.isnan(losses))
+        ):
+            best_val_loss = float(np.nanmin(losses))
+            best_epoch = params.best_start + int(np.nanargmin(losses))
 
     # ########################## TRAINING LOOP ################################
 
@@ -321,18 +331,28 @@ def train(params):
                 xhat_val.extend(vis.format(v_hat, data_dim))
             v_history[-1] /= len(vals)
 
+            # batch-weighted validation loss over all ranks (collective call:
+            # every rank must reach it)
+            global_val_loss = None
+            if params.vis_best:
+                t = torch.tensor(
+                    [float(v_history[-1][0]) * len(vals), float(len(vals))],
+                    dtype=torch.float64,
+                    device=fabric.device,
+                )
+                t = fabric.all_reduce(t, reduce_op="sum")
+                global_val_loss = float(t[0] / t[1])
+
             # lowest validation total loss so far (only tracked with vis_best),
-            # decided on rank zero so all ranks take the same plotting branches
-            is_best = fabric.broadcast(
-                bool(
-                    params.vis_best
-                    and epoch + 1 >= params.best_start
-                    and v_history[-1][0] < best_val_loss
-                ),
-                src=0,
+            # computed over all ranks so all take the same plotting branches
+            is_best = bool(
+                params.vis_best
+                and epoch + 1 >= params.best_start
+                and global_val_loss < best_val_loss
             )
             if is_best:
-                best_val_loss = float(v_history[-1][0])
+                best_val_loss = global_val_loss
+                best_epoch = epoch + 1
 
             logging.info(
                 "Validation : Epoch: [%d/%d] | Loss: %f | Recon: %f | "
@@ -780,6 +800,10 @@ def train(params):
                         "optimizer_state_dict": optimizer._optimizer.state_dict(),
                         "t_loss_history": t_history,
                         "v_loss_history": v_history,
+                        "best_val_loss": (
+                            best_val_loss if best_epoch is not None else None
+                        ),
+                        "best_epoch": best_epoch,
                     },
                     os.path.join("states", mname),
                 )
