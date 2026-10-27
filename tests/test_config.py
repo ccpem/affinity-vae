@@ -1,3 +1,4 @@
+import logging
 import os
 import pathlib
 import tempfile
@@ -103,12 +104,64 @@ class ConfigTest(unittest.TestCase):
         saved_model = load_config_params(config_file=output_path)
         self.assertEqual(saved_model, self.default_model)
 
-    def test_vis_all_does_not_enable_epoch_and_best_plots(self):
+    def test_vis_all_false_does_not_disable_best_plots(self):
         data = load_config_params(
-            config_file=self.config, local_args={"vis_all": True}
+            config_file=self.config, local_args={"vis_all": False}
         )
         self.assertFalse(data.vis_epochs)
-        self.assertFalse(data.vis_best)
+        self.assertTrue(data.vis_best)
+
+    PER_EPOCH = ("acc", "rec", "emb", "dynamic", "sim", "int", "dis", "pos")
+
+    def _best_args(self, plots_on=True, **extra):
+        args = {"vis_all": False, "vis_best": True}
+        for n in self.PER_EPOCH:
+            args[f"vis_{n}"] = False
+        if plots_on:
+            args["vis_rec"] = True
+            args["freq_rec"] = 10
+        args.update(extra)
+        return args
+
+    def _load_logs(self, local_args):
+        with self.assertLogs(level="WARNING") as cm:
+            logging.warning("sentinel")
+            load_config_params(config_file=self.config, local_args=local_args)
+        return cm.output
+
+    def test_vis_best_no_plots_warning(self):
+        out = self._load_logs(
+            self._best_args(plots_on=False, epochs=5, best_start=1)
+        )
+        self.assertTrue(
+            any("no per-epoch plots are enabled" in m for m in out)
+        )
+        self.assertFalse(any("after the last epoch" in m for m in out))
+
+    def test_vis_best_start_after_last_epoch_warning(self):
+        out = self._load_logs(self._best_args(epochs=3, best_start=10))
+        self.assertTrue(
+            any(
+                "vis_best starts at epoch 10, after the last epoch (3)" in m
+                for m in out
+            )
+        )
+        self.assertFalse(
+            any("no per-epoch plots are enabled" in m for m in out)
+        )
+
+    def test_vis_best_false_no_best_warnings(self):
+        out = self._load_logs(
+            self._best_args(
+                plots_on=False, vis_best=False, epochs=3, best_start=10
+            )
+        )
+        self.assertFalse(any("vis_best" in m for m in out))
+
+    def test_vis_best_valid_no_best_warnings(self):
+        for start in (1, 3):
+            out = self._load_logs(self._best_args(epochs=3, best_start=start))
+            self.assertFalse(any("vis_best" in m for m in out))
 
     def test_validate_config(self):
 
@@ -126,7 +179,7 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(data.split, self.data_local['split'])
         self.assertEqual(data.new_out, self.default_model.new_out)
         self.assertFalse(data.vis_epochs)
-        self.assertFalse(data.vis_best)
+        self.assertTrue(data.vis_best)
         self.assertIsNone(data.out)
 
         data_config_only = load_config_params(config_file=self.config)

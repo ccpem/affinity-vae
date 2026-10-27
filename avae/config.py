@@ -197,7 +197,7 @@ class AffinityConfig(pydantic.BaseModel):
         "latest set",
     )
     vis_best: bool = pydantic.Field(
-        False,
+        True,
         description="Make every enabled per-epoch plot, regardless of freq_*, "
         "whenever the validation loss or the validation accuracy reaches a "
         "new best (from best_start; accuracy is computed every epoch from "
@@ -468,6 +468,29 @@ def load_config_params(
                 logging.warning(
                     f"Parameter {key} is set to True but its frequency is 0. Setting to {freq} epochs."
                 )
+
+    # vis_best can only save plots that are enabled, from best_start onward
+    if params['vis_best']:
+        per_epoch = (
+            "acc",
+            "rec",
+            "emb",
+            "dynamic",
+            "sim",
+            "int",
+            "dis",
+            "pos",
+        )
+        if not any(params[f"vis_{name}"] for name in per_epoch):
+            logging.warning(
+                "vis_best is set but no per-epoch plots are enabled; "
+                "no best plots will be saved."
+            )
+        if params['best_start'] > params['epochs']:
+            logging.warning(
+                f"vis_best starts at epoch {params['best_start']}, after the "
+                f"last epoch ({params['epochs']}); no best plots will be saved."
+            )
 
     # validate the new config
     try:

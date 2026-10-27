@@ -169,29 +169,6 @@ def train(params):
     best_epoch = None  # 1-based epoch of best_val_loss
     best_val_acc = None  # best validation accuracy so far
     best_acc_epoch = None  # 1-based epoch of best_val_acc
-    if params.vis_best and not any(
-        getattr(params, f"vis_{name}")
-        for name in (
-            "acc",
-            "rec",
-            "emb",
-            "dynamic",
-            "sim",
-            "int",
-            "dis",
-            "pos",
-        )
-    ):
-        logging.warning(
-            "vis_best is set but no per-epoch plots are enabled; "
-            "no best plots will be saved."
-        )
-    if params.vis_best and params.best_start > params.epochs:
-        logging.warning(
-            f"vis_best starts at epoch {params.best_start}, after the last "
-            f"epoch ({params.epochs}); no best plots will be saved."
-        )
-
     if params.restart:
         if state is None:
             if not os.path.exists("states"):
