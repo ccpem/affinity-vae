@@ -102,10 +102,15 @@ class GaussianSplatRenderer(torch.nn.Module):
         self.coords = self.coords.to(
             self.device
         )  # calculate D^2 for all combinations of voxel and gaussian
-        D_squared = torch.sum(
-            self.coords[:, :, None, :] ** 2 + splats_t[:, None, :, :] ** 2,
-            axis=-1,
-        ) - 2 * torch.matmul(self.coords, splats)
+        # as |c|^2 + |s|^2 - 2 c.s, summing the squared coordinates before
+        # broadcasting so no (N, voxels, gaussians, 3) tensor is created
+        coords_sq = torch.sum(self.coords**2, axis=-1)  # (1, voxels)
+        splats_sq = torch.sum(splats_t**2, axis=-1)  # (N, gaussians)
+        D_squared = (
+            coords_sq[:, :, None]
+            + splats_sq[:, None, :]
+            - 2 * torch.matmul(self.coords, splats)
+        )
         # scale the gaussians
         sigmas = 2.0 * sigmas[:, None, :] ** 2
         sigmas = sigmas.to(self.device)

@@ -435,3 +435,38 @@ class ModelSetupTest(unittest.TestCase):
 
         self.assertIsInstance(model.encoder, Encoder)
         self.assertIsInstance(model.decoder, GaussianSplatDecoder)
+
+
+class GaussianSplatRendererTest(unittest.TestCase):
+    def test_render_matches_direct_gmm(self):
+        from avae.decoders.differentiable import GaussianSplatRenderer
+
+        torch.manual_seed(0)
+        for shape in ((6, 5), (4, 5, 6)):
+            with self.subTest(shape=shape):
+                renderer = GaussianSplatRenderer(shape)
+                splats = torch.rand(3, 3, 7) * 2 - 1  # (N, 3, gaussians)
+                weights = torch.rand(3, 7)
+                sigmas = torch.rand(3, 7)
+                out = renderer(
+                    splats, weights, sigmas, splat_sigma_range=(0.1, 0.5)
+                )
+
+                # direct evaluation of |c - s|^2 for every voxel/gaussian,
+                # in float64 so the reference has no cancellation error
+                coords = renderer.coords[0].double()  # (voxels, 3)
+                diff = (
+                    coords[None, :, None, :]
+                    - splats.double().transpose(1, 2)[:, None, :, :]
+                )
+                d2 = (diff**2).sum(-1)
+                s = 2.0 * (sigmas.double() * 0.4 + 0.1)[:, None, :] ** 2
+                expected = (
+                    weights.double()[:, None, :] * torch.exp(-d2 / s)
+                ).sum(-1)
+                torch.testing.assert_close(
+                    out.double(),
+                    expected.reshape(-1, *shape).unsqueeze(1),
+                    atol=1e-5,
+                    rtol=1e-4,
+                )
