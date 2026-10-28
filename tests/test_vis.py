@@ -506,6 +506,14 @@ class _RecordingDecoder:
         self.calls.append((z.clone(), None if pose is None else pose.clone()))
         return torch.zeros(z.shape[0], *self.dsize)
 
+    def all_inputs(self):
+        """Inputs of all recorded calls joined in order, since the plots
+        decode in chunks."""
+        z = torch.cat([c[0] for c in self.calls])
+        poses = [c[1] for c in self.calls]
+        pose = None if poses[0] is None else torch.cat(poses)
+        return z, pose
+
 
 class _FakeVae:
     def __init__(self, dsize):
@@ -547,7 +555,7 @@ class TraversalTest(unittest.TestCase):
                 "cpu",
                 number_of_samples=n,
             )
-            z, pose = vae.decoder.calls[0]
+            z, pose = vae.decoder.all_inputs()
             pose = pose.numpy().reshape(2, n, 2)
             for d in range(2):
                 np.testing.assert_allclose(
@@ -578,7 +586,7 @@ class TraversalTest(unittest.TestCase):
                 poses=self.poses,
                 number_of_samples=n,
             )
-            z, _ = vae.decoder.calls[0]
+            z, _ = vae.decoder.all_inputs()
             z = z.numpy().reshape(3, n, 3)
             for d in range(3):
                 np.testing.assert_allclose(
@@ -596,7 +604,7 @@ class TraversalTest(unittest.TestCase):
         vis.pose_disentanglement_plot(
             self.dsize, self.lats, self.poses, self.vae, "cpu"
         )
-        _, pose = self.vae.decoder.calls[0]
+        _, pose = self.vae.decoder.all_inputs()
         self.assertEqual(pose.shape[0], 2 * 15)
         self.assertEqual(
             self.save_grid.call_args[0][4], "disentanglement-pose_avg_trn"
@@ -708,7 +716,7 @@ class TraversalTest(unittest.TestCase):
         vis.interpolations_plot(
             self.dsize, self.lats, labels, self.vae, "cpu", poses=self.poses
         )
-        z, pose = self.vae.decoder.calls[0]
+        z, pose = self.vae.decoder.all_inputs()
         n = 10
         self.assertEqual(z.shape, (n * n, 3))
         self.assertEqual(self.save_grid.call_args[0][:2], (n, n))
@@ -729,6 +737,31 @@ class TraversalTest(unittest.TestCase):
             rtol=1e-5,
         )
 
+    def test_decode_in_chunks(self):
+        z = torch.arange(37 * 3, dtype=torch.float32).reshape(37, 3)
+        pose = torch.arange(37 * 2, dtype=torch.float32).reshape(37, 2)
+
+        class _Echo:
+            def __init__(self):
+                self.sizes = []
+
+            def decoder(self, z, pose):
+                self.sizes.append(len(z))
+                return torch.cat([z, pose], dim=1)
+
+        vae = _Echo()
+        out = vis._decode_in_chunks(vae, z, pose, chunk=16)
+        self.assertEqual(vae.sizes, [16, 16, 5])
+        torch.testing.assert_close(out, torch.cat([z, pose], dim=1))
+        # the interpolation grid (100 points) is split by the default chunk
+        labels = np.array(list("abcde") * 4)
+        vis.interpolations_plot(
+            self.dsize, self.lats, labels, self.vae, "cpu", poses=self.poses
+        )
+        calls = self.vae.decoder.calls
+        self.assertGreater(len(calls), 1)
+        self.assertTrue(all(len(c[0]) <= vis.DECODE_CHUNK for c in calls))
+
     def test_interpolation_without_pose_or_classes(self):
         labels = np.array(list("abcde") * 4)
         vis.interpolations_plot(
@@ -747,7 +780,7 @@ class TraversalTest(unittest.TestCase):
         vis.interpolations_plot(
             self.dsize, self.lats, labels, self.vae, "cpu", poses=self.poses
         )
-        z, pose = self.vae.decoder.calls[0]
+        z, pose = self.vae.decoder.all_inputs()
         n = 10
         self.assertEqual(z.shape, (n, 3))
         self.assertEqual(self.save_grid.call_args[0][:2], (1, n))

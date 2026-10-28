@@ -417,6 +417,31 @@ def _central_slice_tiles(images: npt.NDArray) -> npt.NDArray:
     return tiles
 
 
+# number of whole samples decoded per call by the traversal and
+# interpolation plots; the Gaussian splat decoder needs memory proportional
+# to samples x voxels x splats, so decoding all points at once can exceed
+# GPU memory for large volumes
+DECODE_CHUNK = 16
+
+
+def _decode_in_chunks(
+    vae: torch.nn.Module,
+    z_batch: torch.Tensor,
+    pose_batch: torch.Tensor | None,
+    chunk: int = DECODE_CHUNK,
+) -> torch.Tensor:
+    """Decode `z_batch` (with `pose_batch`) in groups of `chunk` whole
+    samples, like training batches, and concatenate the outputs in order.
+    Each chunk's output is moved to the CPU as it is produced."""
+    outputs = []
+    with torch.no_grad():
+        for start in range(0, z_batch.shape[0], chunk):
+            stop = start + chunk
+            pose = None if pose_batch is None else pose_batch[start:stop]
+            outputs.append(vae.decoder(z_batch[start:stop], pose).cpu())
+    return torch.cat(outputs)
+
+
 def _save_grid_figure(
     rows: int,
     cols: int,
@@ -1468,8 +1493,7 @@ def latent_disentamglement_plot(
             )
         ).to(device)
 
-    with torch.no_grad():
-        recon = vae.decoder(z_batch, pose_batch)
+    recon = _decode_in_chunks(vae, z_batch, pose_batch)
 
     recon_images = np.reshape(
         recon.cpu().numpy(), (latent_dims, number_of_samples, *dsize)
@@ -1677,8 +1701,7 @@ def pose_disentanglement_plot(
         )
     ).to(device)
 
-    with torch.no_grad():
-        decoded = vae.decoder(z_batch, pose_batch)
+    decoded = _decode_in_chunks(vae, z_batch, pose_batch)
 
     recon = np.reshape(
         decoded.cpu().numpy(), (pos_dims, number_of_samples, *dsize)
@@ -1779,8 +1802,7 @@ def interpolations_plot(
             device=device, dtype=torch.float32
         )
 
-    with torch.no_grad():
-        decoded_images = vae.decoder(z_batch, pose_batch)
+    decoded_images = _decode_in_chunks(vae, z_batch, pose_batch)
 
     decoded_grid = np.reshape(decoded_images.cpu().numpy(), (rows, n, *dsize))
 
