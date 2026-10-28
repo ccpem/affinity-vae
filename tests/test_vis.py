@@ -722,10 +722,10 @@ class TraversalTest(unittest.TestCase):
             rows.append(hits[0])
         # corners come from 4 distinct classes
         self.assertEqual(len(set(labels[rows])), 4)
-        # same pose (mean of the corners' poses) in every cell
+        # same pose (the first corner's real pose) in every cell
         np.testing.assert_allclose(
             pose.numpy(),
-            np.tile(self.poses[rows].mean(axis=0), (n * n, 1)),
+            np.tile(self.poses[rows[0]], (n * n, 1)),
             rtol=1e-5,
         )
 
@@ -760,7 +760,7 @@ class TraversalTest(unittest.TestCase):
         self.assertEqual(len(set(labels[rows])), 2)
         np.testing.assert_allclose(
             pose.numpy(),
-            np.tile(self.poses[rows].mean(axis=0), (n, 1)),
+            np.tile(self.poses[rows[0]], (n, 1)),
             rtol=1e-5,
         )
 

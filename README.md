@@ -513,7 +513,7 @@ Plots marked *per-epoch* are drawn every `freq_<name>` epochs (counting from
 | `vis_emb` | on | per-epoch (`freq_emb`) | `embedding_TSNE`, `embedding_TSNE_pose` |
 | `vis_dynamic` | on | per-epoch (`freq_dynamic`) | `latents/latent_epoch_<N>.html` (interactive; large for big datasets) |
 | `vis_sim` | off | per-epoch (`freq_sim`) | `similarity_mean_{trn,val}`: mean cosine similarity between classes in latent space |
-| `vis_int` | off | per-epoch (`freq_int`) | `interpolations_trn`: 10x10 latent grid between real encodings of 4 random classes; with only 2 or 3 classes, a row of 10 steps between 2 classes (skipped with 1 class). Pose fixed to the mean of the corners' poses |
+| `vis_int` | off | per-epoch (`freq_int`) | `interpolations_trn`: 10x10 latent grid between real encodings of 4 random classes; with only 2 or 3 classes, a row of 10 steps between 2 classes (skipped with 1 class). Pose fixed to the first corner's real pose |
 | `vis_dis` | off | per-epoch (`freq_dis`) | `disentanglement-latent_avg_trn`: traversal of each latent dimension, from -2 to +2 standard deviations in 15 steps (+ `disentanglement-latent_<class>_trn` with `vis_class`) |
 | `vis_pos` | off | per-epoch (`freq_pos`) | `disentanglement-pose_avg_trn`: traversal of each pose dimension, same range (+ `disentanglement-pose_<class>_trn` with `vis_class`) |
 | `vis_his` | off | once | `classes_distribution_{train,validation,evaluation}` |

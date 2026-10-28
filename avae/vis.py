@@ -1713,8 +1713,8 @@ def interpolations_plot(
     The corners are one random real encoding from each of 4 random distinct
     classes. With only 2 or 3 classes, a single row of 10 steps is drawn
     between one random real encoding from each of 2 random distinct classes.
-    The pose is the mean of the corners' poses, used in every cell (None if
-    there are no poses).
+    The real pose of the first corner is used in every cell, so only the
+    latent changes across the grid (None if there are no poses).
 
     Parameters
     ----------
@@ -1774,10 +1774,8 @@ def interpolations_plot(
     pose_batch = None
     if poses is not None:
         poses_arr = np.asarray(poses, dtype=np.float32)
-        # plain mean; for axis-angle poses this is only an approximate
-        # rotation average, fine for nearby orientations
-        pose_mean = torch.as_tensor(poses_arr[corner_idx].mean(axis=0))
-        pose_batch = pose_mean.repeat(rows * n, 1).to(
+        corner_pose = torch.as_tensor(poses_arr[corner_idx[0]])
+        pose_batch = corner_pose.repeat(rows * n, 1).to(
             device=device, dtype=torch.float32
         )
 
