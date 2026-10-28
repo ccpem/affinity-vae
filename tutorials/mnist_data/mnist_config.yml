@@ -72,10 +72,14 @@ vis_sim: false
 vis_int: false
 vis_dis: false
 vis_pos: false
-vis_pose_class: "1,2"
+vis_class: "1,2"
 vis_all: true
 
 #### Visualization frequencies
+# Plot frequencies in epochs. 0 = never periodically: with vis_best on, the
+# plot is then only drawn at new best-loss / best-accuracy epochs (from
+# best_start), e.g. freq_all: 0 for best-epoch plots only. The loss plot has no
+# frequency and is redrawn every epoch.
 freq_acc: 10
 freq_rec: 10
 freq_emb: 10
@@ -84,7 +88,7 @@ freq_sim: 10
 freq_int: 10
 freq_dis: 10
 freq_pos: 10
-freq_all: 10
+freq_all: 10  # sets all above (and freq_sta, freq_eval unless 0)
 
 #### Debug parameters
 debug: false

@@ -157,9 +157,16 @@ One flat directory of files, all of the same type:
 
 Optionally, add a `test/` subdirectory with the same layout. Test data is never
 used for training. It is encoded every `freq_eval` epochs and shown in the
-embedding plots as `test`, so test points only appear in plots and
-checkpoints from epochs that are a multiple of `freq_eval`. Test classes do not need to appear in the class list
-or the affinity matrix.
+embedding plots, so test points only appear in plots and checkpoints from
+epochs that are a multiple of `freq_eval`. Test classes do not need to appear
+in the class list or the affinity matrix.
+
+In plots, test samples are labelled `<class>_test` during training and
+`<class>_eval` during evaluation (`--evaluate`), so they are not confused with
+training classes of the same name. If test files have no known class, name
+them `test_<anything>` (class `test`); they are then labelled plain `test` or
+`eval`. Accuracy, confusion matrices and the saved metadata always use the
+plain class names.
 
 ```
 my_data/
@@ -247,20 +254,20 @@ When it finishes you will find (with `<ts>` the run timestamp, `YYMMDD-HHMM`):
 └── results_<ts>_model_cnn_lat7_pose3_lr0.001_beta0.1_gamma2.0/
     ├── configs/config_<ts>.yaml        # the full resolved config: re-run with --config_file
     ├── logs/avae_run_log_<ts>.log      # everything printed to the console
-    ├── latents/latent_epoch_10_.html   # interactive latent-space explorer (open in a browser)
+    ├── latents/latent_epoch_10.html   # interactive latent-space explorer (open in a browser)
     ├── states/
     │   ├── avae_<ts>_E9_7_3.pt         # model checkpoint (epoch index 9 = 10th epoch)
     │   └── meta_<ts>_E9_L7_P3.pkl      # latents + metadata of every sample, needed for evaluation
     └── plots/
         ├── loss.png, loss_total.png    # loss curves (all terms / total only)
-        ├── confusion_train_norm.png    # normalised confusion matrices (+ .csv, raw and normalised)
-        ├── confusion_valid_norm.png
-        ├── f1.png, f1_train.csv, f1_valid.csv
+        ├── confusion_trn_norm.png      # normalised confusion matrices (+ .csv, raw and normalised)
+        ├── confusion_val_norm.png
+        ├── f1.png, f1_trn.csv, f1_val.csv
         ├── recon_trn_in.png / _out.png # input vs reconstruction, central slices
-        ├── recon_trn.mrc, recon_trn.csv # 3D input|reconstruction grid and which sample is where
+        ├── recon_trn_in.mrc, recon_trn_out.mrc, recon_trn.csv # 3D input and reconstruction grids (same layout) and which sample is where
         ├── recon_val_*                 # same for validation
         ├── embedding_TSNE.png          # t-SNE of the latent space
-        ├── embedding_TSNEpose.png      # t-SNE of the pose space
+        ├── embedding_TSNE_pose.png     # t-SNE of the pose space
         ├── best_loss_epoch0010_<ts>/   # per-epoch plots (not loss/F1) from the best-validation-loss epoch
         └── best_acc_epoch0010_<ts>/    # per-epoch plots (not loss/F1) from the best-validation-accuracy epoch
 ```
@@ -302,7 +309,7 @@ python run.py --config_file my_config.yml --epochs 200 --beta 0.5 --new_out
 
 When the command line overrides a value from the file, the log shows a
 `Command line argument ... is overwriting config value` warning. Unknown keys and
-invalid values (for example `model: xyz` or `vis_pose_class: nosuchclass`) stop the run
+invalid values (for example `model: xyz` or `vis_class: nosuchclass`) stop the run
 before training begins, with a message naming the problem.
 
 > **On/off options can only be switched on from the command line.** Writing
@@ -368,12 +375,11 @@ cyc_method_gamma: flat            # constant gamma
 
 #### Visualisation
 vis_all: true                     # switch on every plot type ...
-freq_all: 20                      # ... every 20 epochs
+freq_all: 20                      # ... every 20 epochs (0 = only at best epochs)
 vis_format: png
 vis_best: true
 best_start: 50                    # start tracking best epochs at epoch 50
-vis_pose_class: "1b23,1dfo"       # extra pose traversal per listed class
-vis_z_n_int: "2,10"               # 2 figures, 10x10 grid each
+vis_class: "1b23,1dfo"           # extra latent/pose traversals per listed class
 ```
 
 Paths can be relative, but they are resolved against the directory you run
@@ -388,7 +394,7 @@ python run.py \
   --classes tests/testdata_npy/classes.csv \
   --epochs 12 --batch 16 --latent_dims 8 --pose_dims 1 \
   --vis_all --freq_all 6 --best_start 10 --vis_epochs \
-  --vis_z_n_int 1,5 --vis_pose_class a,e \
+  --vis_class a,e \
   --out ~/avae_runs --new_out
 ```
 
@@ -495,26 +501,30 @@ Use `--vis_cyc` to plot the resulting schedules.
 ### Visualisation: which plots
 
 Plots marked *per-epoch* are drawn every `freq_<name>` epochs (counting from
-1), at the best epochs when `vis_best` is on, and at no other time.
+1), at the best epochs when `vis_best` is on, and at no other time. With
+`freq_<name>: 0` a plot is only drawn at the best epochs (see
+[Visualisation: frequencies](#visualisation-frequencies)).
 
 | Parameter | Default | When | Output (in `plots/` unless noted) |
 | --- | --- | --- | --- |
 | `vis_los` | on | every epoch from epoch 2 | `loss`, `loss_total` |
-| `vis_acc` | on | per-epoch (`freq_acc`) | `confusion_{train,valid}_norm` + CSVs, `f1` + `f1_{train,valid}.csv` |
-| `vis_rec` | on | per-epoch (`freq_rec`) | `recon_{trn,val}_in/_out`; for 3D also `recon_{trn,val}.mrc` + `.csv` |
-| `vis_emb` | on | per-epoch (`freq_emb`) | `embedding_TSNE`, `embedding_TSNEpose` |
-| `vis_dynamic` | on | per-epoch (`freq_dynamic`) | `latents/latent_epoch_<N>_.html` (interactive; large for big datasets) |
-| `vis_sim` | off | per-epoch (`freq_sim`) | `similarity_mean_{train,valid}`: mean cosine similarity between classes in latent space |
-| `vis_int` | off | per-epoch (`freq_int`) | `interpolations_trn` (+ `latent_interpolate_<i>` with `vis_z_n_int`) |
-| `vis_dis` | off | per-epoch (`freq_dis`) | `disentanglement-latent_avg_trn`: traversal of each latent dimension, from -2 to +2 standard deviations in 15 steps (+ `disentanglement-latent_<class>_trn` with `vis_dis_class`) |
-| `vis_pos` | off | per-epoch (`freq_pos`) | `disentanglement-pose_avg_trn`: traversal of each pose dimension, same range (+ `disentanglement-pose_<class>_trn` with `vis_pose_class`) |
+| `vis_acc` | on | per-epoch (`freq_acc`) | `confusion_{trn,val}_norm` + CSVs, `f1` + `f1_{trn,val}.csv` |
+| `vis_rec` | on | per-epoch (`freq_rec`) | `recon_{trn,val}_in/_out`; for 3D also `recon_{trn,val}_in.mrc` / `_out.mrc` (same grid layout) + `.csv` |
+| `vis_emb` | on | per-epoch (`freq_emb`) | `embedding_TSNE`, `embedding_TSNE_pose` |
+| `vis_dynamic` | on | per-epoch (`freq_dynamic`) | `latents/latent_epoch_<N>.html` (interactive; large for big datasets) |
+| `vis_sim` | off | per-epoch (`freq_sim`) | `similarity_mean_{trn,val}`: mean cosine similarity between classes in latent space |
+| `vis_int` | off | per-epoch (`freq_int`) | `interpolations_trn`: 10x10 latent grid between real encodings of 4 random classes; with only 2 or 3 classes, a row of 10 steps between 2 classes (skipped with 1 class). Pose fixed to the mean of the corners' poses |
+| `vis_dis` | off | per-epoch (`freq_dis`) | `disentanglement-latent_avg_trn`: traversal of each latent dimension, from -2 to +2 standard deviations in 15 steps (+ `disentanglement-latent_<class>_trn` with `vis_class`) |
+| `vis_pos` | off | per-epoch (`freq_pos`) | `disentanglement-pose_avg_trn`: traversal of each pose dimension, same range (+ `disentanglement-pose_<class>_trn` with `vis_class`) |
 | `vis_his` | off | once | `classes_distribution_{train,validation,evaluation}` |
 | `vis_aff` | off | once | `affinity_matrix` (training classes highlighted) |
 | `vis_cyc` | off | once | `hyperaparam_beta`, `hyperaparam_gamma` |
 | `vis_all` | none | — | Set to on/off to switch every option above at once. Options you give on the command line take precedence. |
 
 For 3D data, the interpolation, traversal and pose plots are saved as `.mrc`
-grids (open them in Napari or ChimeraX) instead of images.
+grids (open them in Napari or ChimeraX), plus a PNG (`vis_format`) of the central
+slice of every volume in the same grid, with `PNG_EDGE_CROP` (3) pixels cropped
+from each in-plane edge. The `.mrc` is not cropped.
 
 ### Visualisation: settings
 
@@ -525,11 +535,9 @@ grids (open them in Napari or ChimeraX) instead of images.
 | `vis_best` | on | Whenever the validation loss or validation accuracy reaches a new best (from `best_start` on), draw every enabled per-epoch plot regardless of `freq_*`, into `plots/best_loss_epochXXXX_<ts>/` or `plots/best_acc_epochXXXX_<ts>/`. Only the latest folder of each kind per run is kept. Validation accuracy is computed every epoch from `best_start` on, which costs some time per epoch. |
 | `best_start` | `10` | First epoch considered by `vis_best`. A warning is logged if it is later than `epochs`. |
 | `vis_epochs` | off | Also keep every epoch's plots in `plots/epochs_<ts>/epoch_XXXX/` (`plots/` still holds the latest). |
-| `vis_z_n_int` | none | `"n_figs,steps"`, e.g. `2,10`: with `vis_int`, `n_figs` grids of `steps`×`steps` interpolating between encodings of 4 different classes (needs at least 4 classes). |
-| `vis_pose_class` | none | Comma-separated classes, e.g. `1b23,1dfo`: with `vis_pos`, one pose traversal figure per class, from the class mean latent and the class pose mean and spread. |
-| `vis_dis_class` | none | Comma-separated classes: with `vis_dis`, one latent traversal figure per class. |
+| `vis_class` | none | Comma-separated classes, e.g. `1b23,1dfo`. With `vis_dis`, one latent traversal figure per class; with `vis_pos`, one pose traversal figure per class (from the class mean latent and the class pose mean and spread). A class not in the data stops the run when the plot is first made. |
 
-Both class options are checked when the config loads: the classes must be in the `classes` file or, without one, in the file names of `datapath` (`datapath/test` for evaluation). A class with a single sample or no spread is still plotted, with a warning.
+The classes in `vis_class` are checked when the first per-class plot is made; a class that is not in the data stops the run with an error listing the available classes. A class with a single sample or no spread is still plotted, with a warning.
 
 ### Visualisation: frequencies
 
@@ -538,6 +546,22 @@ Both class options are checked when the config loads: the classes must be in the
 per-epoch plot is drawn. `freq_all` sets all of them, **and `freq_sta` and
 `freq_eval`**, to one value. As with `vis_all`, values given explicitly on the
 command line take precedence.
+
+A frequency of `0` turns the periodic plot off. With `vis_best` on, that plot
+is then drawn only when the validation loss or accuracy reaches a new best
+(from `best_start`). To get only best-epoch plots:
+
+```yaml
+vis_best: true
+best_start: 10
+freq_all: 0        # per-epoch plots only at best epochs
+```
+
+`freq_all: 0` does not touch `freq_sta` or `freq_eval`, so checkpoints and test
+encoding keep their own schedule (test points only appear in a best-epoch
+embedding if `freq_eval` lands on that epoch). The loss plot (`vis_los`) has no
+frequency and is redrawn every epoch. With `vis_best` off, a plot with
+frequency `0` is never drawn and a warning is logged.
 
 ### Other
 
@@ -564,15 +588,15 @@ produces:
 │   └── meta_<ts>_E<e>_L<L>_P<P>.pkl     # DataFrame: one row per train/val/test sample with
 │                                        #   file name, class, mode, latent + pose vectors, images
 ├── latents/
-│   └── latent_epoch_<N>_.html           # interactive Altair latent explorer (hover for images)
+│   └── latent_epoch_<N>.html           # interactive Altair latent explorer (hover for images)
 └── plots/
     ├── loss.<fmt>, loss_total.<fmt>     # updated every epoch
-    ├── f1.<fmt>, f1_train.csv, f1_valid.csv
+    ├── f1.<fmt>, f1_trn.csv, f1_val.csv
     ├── affinity_matrix.<fmt>            # vis_aff (+ affinity_matrix_classes.txt for caching)
     ├── classes_distribution_*.<fmt>     # vis_his
     ├── hyperaparam_{beta,gamma}.<fmt>   # vis_cyc
     ├── <latest per-epoch plots>         # confusion_*, recon_*, embedding_*, similarity_*,
-    │                                    #   interpolations_*, disentanglement-*, pose_interpolate_*
+    │                                    #   interpolations_*, disentanglement-*
     ├── best_loss_epochXXXX_<ts>/        # vis_best: per-epoch plots at the best val-loss epoch
     ├── best_acc_epochXXXX_<ts>/         # vis_best: per-epoch plots at the best val-accuracy epoch
     └── epochs_<ts>/epoch_XXXX/          # vis_epochs: per-epoch plots of every plotted epoch
@@ -638,13 +662,13 @@ How it works:
 Outputs (in the same run directory):
 
 ```
-plots/confusion_train_eval_norm.<fmt>, confusion_eval_norm.<fmt> (+ .csv)
-plots/f1_eval.<fmt>, f1_train_eval.csv, f1_eval.csv
+plots/confusion_trn_eval_norm.<fmt>, confusion_eval_norm.<fmt> (+ .csv)
+plots/f1_eval.<fmt>, f1_trn_eval.csv, f1_eval.csv
 plots/embedding_TSNE_eval.<fmt>                    # evaluation data only
-plots/embedding_TSNE_train_eval_comparison.<fmt>   # training + evaluation together
-plots/recon_evl_in/_out.<fmt> (+ recon_evl.mrc/.csv for 3D)
+plots/embedding_TSNE_trn_eval_comparison.<fmt>   # training + evaluation together
+plots/recon_eval_in/_out.<fmt> (+ recon_eval_in.mrc/_out.mrc/.csv for 3D)
 plots/*_eval*                                      # dis/pos/int/sim plots if enabled
-latents/latent_epoch_1__eval.html
+latents/latent_epoch_1_eval.html
 states/meta_<ts>_E<e>_L<L>_P<P>_eval.pkl           # training metadata + evaluation rows
 ```
 

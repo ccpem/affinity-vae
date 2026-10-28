@@ -198,6 +198,27 @@ class ConfigTest(unittest.TestCase):
             data_local_data_only.vis_all, self.default_model.vis_all
         )
 
+    def test_zero_plot_frequency(self):
+        # freq_all 0: plots only at best epochs; checkpoints and test
+        # encoding keep their own frequency
+        data = load_config_params(
+            local_args={**self.data_local, "freq_all": 0, "freq_sta": 7}
+        )
+        self.assertEqual(data.freq_acc, 0)
+        self.assertEqual(data.freq_pos, 0)
+        self.assertEqual(data.freq_sta, 7)
+        self.assertEqual(data.freq_eval, 10)
+        # without vis_best a plot with frequency 0 is never drawn: warn
+        with self.assertLogs(level="WARNING") as logs:
+            load_config_params(
+                local_args={
+                    **self.data_local,
+                    "freq_sim": 0,
+                    "vis_best": False,
+                }
+            )
+        self.assertTrue(any("freq_sim is 0" in m for m in logs.output))
+
     def test_validate_config_fail(self):
 
         with self.assertRaises(RuntimeError):

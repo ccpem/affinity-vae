@@ -252,10 +252,11 @@ def train(params):
             # record loss
             for i in range(len(t_history[-1])):
                 t_history[-1][i] += history_loss[i].item()
-            log_progress(
-                "Epoch: [%d/%d] | Batch: [%d/%d]"
-                % (epoch + 1, params.epochs, batch_number + 1, len(trains))
-            )
+            if rank_zero:
+                log_progress(
+                    "Epoch: [%d/%d] | Batch: [%d/%d]"
+                    % (epoch + 1, params.epochs, batch_number + 1, len(trains))
+                )
 
             # backwards
             fabric.backward(history_loss[0])
@@ -273,19 +274,22 @@ def train(params):
             x_train.extend(as_list(meta_data.get("image", [])))
             xhat_train.extend(vis.format(x_hat, data_dim))
 
-        t_history[-1] /= len(trains)
-
-        logging.info(
-            "Training : Epoch: [%d/%d] | Loss: %f | Recon: %f | "
-            "KLdiv: %f | Affin: %f | Beta: %f | Gamma: %f"
-            % (
-                epoch + 1,
-                params.epochs,
-                *t_history[-1],
-                beta_arr[epoch],
-                gamma_arr[epoch],
-            )
+        # mean over the batches of all ranks, logged once
+        t_history[-1] = utils_learning.mean_over_ranks(
+            t_history[-1], len(trains), fabric
         )
+        if rank_zero:
+            logging.info(
+                "Training : Epoch: [%d/%d] | Loss: %f | Recon: %f | "
+                "KLdiv: %f | Affin: %f | Beta: %f | Gamma: %f"
+                % (
+                    epoch + 1,
+                    params.epochs,
+                    *t_history[-1],
+                    beta_arr[epoch],
+                    gamma_arr[epoch],
+                )
+            )
         # ########################## VAL ######################################
         vae.eval()
         with torch.inference_mode():
@@ -304,10 +308,16 @@ def train(params):
                 # record loss
                 for i in range(len(t_history[-1])):
                     v_history[-1][i] += v_history_loss[i].item()
-                log_progress(
-                    "Epoch: [%d/%d] | Batch: [%d/%d]"
-                    % (epoch + 1, params.epochs, batch_number + 1, len(vals))
-                )
+                if rank_zero:
+                    log_progress(
+                        "Epoch: [%d/%d] | Batch: [%d/%d]"
+                        % (
+                            epoch + 1,
+                            params.epochs,
+                            batch_number + 1,
+                            len(vals),
+                        )
+                    )
 
                 z_val.extend(v_mu.cpu().detach().numpy())  # store latents
                 y_val.extend(as_list(ys))
@@ -319,19 +329,12 @@ def train(params):
                 meta_val.extend(as_list(meta_data.get("meta", [])))
                 x_val.extend(as_list(meta_data.get("image", [])))
                 xhat_val.extend(vis.format(v_hat, data_dim))
-            v_history[-1] /= len(vals)
-
-            # batch-weighted validation loss over all ranks (collective call:
-            # every rank must reach it)
-            global_val_loss = None
-            if params.vis_best:
-                t = torch.tensor(
-                    [float(v_history[-1][0]) * len(vals), float(len(vals))],
-                    dtype=torch.float64,
-                    device=fabric.device,
-                )
-                t = fabric.all_reduce(t, reduce_op="sum")
-                global_val_loss = float(t[0] / t[1])
+            # mean over the batches of all ranks, so every rank logs, plots
+            # and tracks the best epoch with the same value
+            v_history[-1] = utils_learning.mean_over_ranks(
+                v_history[-1], len(vals), fabric
+            )
+            global_val_loss = float(v_history[-1][0])
 
             # best before this epoch, shown at the end of the validation log
             last_best_parts = []
@@ -358,66 +361,19 @@ def train(params):
                 best_val_loss = global_val_loss
                 best_epoch = epoch + 1
 
-            # accuracy every epoch from best_start (collective gather on all
-            # ranks); reused by the vis_acc block below
-            acc_cache = None
-            is_best_acc = False
-            if params.vis_best and epoch + 1 >= params.best_start:
-                acc_gathered = utils_learning.combine_accuracy_data(
-                    z_train,
-                    y_train,
-                    z_val,
-                    y_val,
-                    rank_zero=rank_zero,
-                    world_size=fabric.world_size,
-                )
-                acc_val = 0.0
-                if rank_zero:
-                    assert acc_gathered is not None
-                    (
-                        acc_train,
-                        acc_val,
-                        _,
-                        acc_ypred_train,
-                        acc_ypred_val,
-                    ) = utils_learning.accuracy(
-                        acc_gathered[0],
-                        acc_gathered[1],
-                        acc_gathered[2],
-                        acc_gathered[3],
-                        classifier=params.classifier,
-                    )
-                    acc_cache = (
-                        acc_gathered,
-                        acc_train,
-                        acc_val,
-                        acc_ypred_train,
-                        acc_ypred_val,
-                    )
-                acc_val = float(
-                    fabric.broadcast(
-                        torch.tensor(float(acc_val), device=fabric.device),
-                        src=0,
+            if rank_zero:
+                logging.info(
+                    "Validation : Epoch: [%d/%d] | Loss: %f | Recon: %f | "
+                    "KLdiv: %f | Affin: %f | Beta: %f | Gamma: %f%s"
+                    % (
+                        epoch + 1,
+                        params.epochs,
+                        *v_history[-1],
+                        beta_arr[epoch],
+                        gamma_arr[epoch],
+                        last_best,
                     )
                 )
-                is_best_acc = best_val_acc is None or acc_val > best_val_acc
-                if is_best_acc:
-                    best_val_acc = acc_val
-                    best_acc_epoch = epoch + 1
-            is_best = is_best_loss or is_best_acc
-
-            logging.info(
-                "Validation : Epoch: [%d/%d] | Loss: %f | Recon: %f | "
-                "KLdiv: %f | Affin: %f | Beta: %f | Gamma: %f%s"
-                % (
-                    epoch + 1,
-                    params.epochs,
-                    *v_history[-1],
-                    beta_arr[epoch],
-                    gamma_arr[epoch],
-                    last_best,
-                )
-            )
 
             # ########################## TEST #####################################
             if params.freq_eval != 0 and (epoch + 1) % params.freq_eval == 0:
@@ -444,36 +400,92 @@ def train(params):
                     x_test.extend(as_list(meta_data.get("image", [])))
                     xhat_test.extend(vis.format(t_hat, data_dim))
 
-                    log_progress(
-                        "Epoch: [%d/%d] | Batch: [%d/%d]"
-                        % (
-                            epoch + 1,
-                            params.epochs,
-                            batch_number + 1,
-                            len(tests),
+                    if rank_zero:
+                        log_progress(
+                            "Epoch: [%d/%d] | Batch: [%d/%d]"
+                            % (
+                                epoch + 1,
+                                params.epochs,
+                                batch_number + 1,
+                                len(tests),
+                            )
                         )
+                if rank_zero:
+                    logging.info(
+                        "Evaluation : Epoch: [%d/%d]"
+                        % (epoch + 1, params.epochs)
                     )
-                logging.info(
-                    "Evaluation : Epoch: [%d/%d]" % (epoch + 1, params.epochs)
-                )
-            logging.info("\n")  # end of training round
+            if rank_zero:
+                logging.info("\n")  # end of training round
 
-        needs_meta_df = (
+        # ########################## COMPUTE RESULTS ##########################
+        track_acc = params.vis_best and epoch + 1 >= params.best_start
+        # accuracy on the latents of all ranks (collective gather): every
+        # epoch from best_start for best tracking, and every freq_acc epochs
+        # for vis_acc; the accuracy plots below reuse the result
+        acc_cache = None
+        is_best_acc = False
+        if track_acc or (
+            params.vis_acc
+            and params.freq_acc != 0
+            and (epoch + 1) % params.freq_acc == 0
+        ):
+            acc_gathered = utils_learning.combine_accuracy_data(
+                z_train,
+                y_train,
+                z_val,
+                y_val,
+                rank_zero=rank_zero,
+                world_size=fabric.world_size,
+            )
+            acc_val = 0.0
+            if rank_zero:
+                assert acc_gathered is not None
+                (
+                    acc_train,
+                    acc_val,
+                    _,
+                    acc_ypred_train,
+                    acc_ypred_val,
+                ) = utils_learning.accuracy(
+                    *acc_gathered,
+                    classifier=params.classifier,
+                )
+                acc_cache = (acc_gathered, acc_ypred_train, acc_ypred_val)
+                logging.info(
+                    "\n------------------->>> Overall accuracy: "
+                    "Train: %f | Val: %f\n" % (acc_train, acc_val)
+                )
+            acc_val = float(
+                fabric.broadcast(
+                    torch.tensor(float(acc_val), device=fabric.device),
+                    src=0,
+                )
+            )
+            if track_acc:
+                is_best_acc = best_val_acc is None or acc_val > best_val_acc
+                if is_best_acc:
+                    best_val_acc = acc_val
+                    best_acc_epoch = epoch + 1
+        is_best = is_best_loss or is_best_acc
+
+        emb_due = params.vis_emb and (
+            (params.freq_emb != 0 and (epoch + 1) % params.freq_emb == 0)
+            or is_best
+        )
+        dynamic_due = params.vis_dynamic and (
             (
-                # visualising embedding
-                params.vis_emb
-                and ((epoch + 1) % params.freq_emb == 0 or is_best)
+                params.freq_dynamic != 0
+                and (epoch + 1) % params.freq_dynamic == 0
             )
-            or (
-                # visualising dynamic embedding
-                params.vis_dynamic
-                and ((epoch + 1) % params.freq_dynamic == 0 or is_best)
-            )
-            or (
-                # saving states of the model
-                params.freq_sta != 0
-                and (epoch + 1) % params.freq_sta == 0
-            )
+            or is_best
+        )
+        # metadata of all ranks, for the t-SNE, the embeddings and the saved
+        # states
+        needs_meta_df = (
+            emb_due
+            or dynamic_due
+            or (params.freq_sta != 0 and (epoch + 1) % params.freq_sta == 0)
         )
         if needs_meta_df:
             meta_df = build_meta_df(
@@ -517,8 +529,74 @@ def train(params):
                 world_size=fabric.world_size,
             )
 
+        # t-SNE of the latents (and poses) for the embedding plots
+        if rank_zero and (emb_due or dynamic_due):
+            latent_columns = [
+                col for col in combined_meta_df if col.startswith("lat")
+            ]
+            embedding_xs = combined_meta_df[latent_columns].to_numpy()
+            embedding_ys = combined_meta_df["id"].to_numpy().copy()
+            embedding_ys = embedding_ys.astype(object)
+            test_mask = combined_meta_df["mode"].to_numpy() == "tst"
+            embedding_ys[test_mask] = utils_vis.plot_labels(
+                embedding_ys[test_mask], "test"
+            )
+            latent_embedding = utils_learning.tsne_embedding(embedding_xs)
+            if emb_due and pose:
+                pose_columns = [
+                    col for col in combined_meta_df if col.startswith("pos")
+                ]
+                pose_xs = combined_meta_df[pose_columns].to_numpy()
+                pose_embedding = utils_learning.tsne_embedding(pose_xs)
+            logging.info("")
+
         # ########################## VISUALISE ################################
-        if is_best:
+        # what is plotted this epoch (the same on every rank)
+        acc_due = params.vis_acc and (
+            (params.freq_acc != 0 and (epoch + 1) % params.freq_acc == 0)
+            or is_best
+        )
+        los_due = params.vis_los and epoch > 0
+        rec_due = params.vis_rec and (
+            (params.freq_rec != 0 and (epoch + 1) % params.freq_rec == 0)
+            or is_best
+        )
+        dis_due = params.vis_dis and (
+            (params.freq_dis != 0 and (epoch + 1) % params.freq_dis == 0)
+            or is_best
+        )
+        pos_due = (
+            pose
+            and params.vis_pos
+            and (
+                (params.freq_pos != 0 and (epoch + 1) % params.freq_pos == 0)
+                or is_best
+            )
+        )
+        int_due = params.vis_int and (
+            (params.freq_int != 0 and (epoch + 1) % params.freq_int == 0)
+            or is_best
+        )
+        sim_due = params.vis_sim and (
+            (params.freq_sim != 0 and (epoch + 1) % params.freq_sim == 0)
+            or is_best
+        )
+        vis_due = any(
+            (
+                acc_due,
+                los_due,
+                rec_due,
+                emb_due,
+                dynamic_due,
+                dis_due,
+                pos_due,
+                int_due,
+                sim_due,
+            )
+        )
+
+        # plot folders, only set up when something is plotted this epoch
+        if vis_due and is_best:
             # save into the best folder (keeping only the latest of each
             # kind), copying each file to the other best folder, the epoch
             # folder and plots/ as it is saved
@@ -537,114 +615,18 @@ def train(params):
             utils_vis.set_vis_dir(
                 epoch + 1, best=kinds[0], copy_to=tuple(copy_to)
             )
-        elif params.vis_epochs:
+        elif vis_due and params.vis_epochs:
             # save into the epoch folder, copying each file to plots/
             utils_vis.set_vis_dir(
                 epoch + 1, copy_to=(utils_vis.vis_dir(None),)
             )
         else:
             utils_vis.set_vis_dir(None)
-        logging.info("")
-
-        static_embedding_due = (
-            rank_zero
-            and params.vis_emb
-            and ((epoch + 1) % params.freq_emb == 0 or is_best)
-        )
-        dynamic_embedding_due = (
-            rank_zero
-            and params.vis_dynamic
-            and ((epoch + 1) % params.freq_dynamic == 0 or is_best)
-        )
-        if static_embedding_due or dynamic_embedding_due:
-            latent_columns = [
-                col for col in combined_meta_df if col.startswith("lat")
-            ]
-            embedding_xs = combined_meta_df[latent_columns].to_numpy()
-            embedding_ys = combined_meta_df["id"].to_numpy().copy()
-            embedding_ys[combined_meta_df["mode"].to_numpy() == "tst"] = "test"
-            latent_embedding = utils_learning.tsne_embedding(embedding_xs)
-            if static_embedding_due and pose:
-                pose_columns = [
-                    col for col in combined_meta_df if col.startswith("pos")
-                ]
-                pose_xs = combined_meta_df[pose_columns].to_numpy()
-                pose_embedding = utils_learning.tsne_embedding(pose_xs)
+        if rank_zero:
             logging.info("")
 
-        # visualise accuracy: confusion and F1 scores
-        if params.vis_acc and (
-            (params.freq_acc != 0 and (epoch + 1) % params.freq_acc == 0)
-            or is_best
-        ):
-            if acc_cache is not None or (
-                params.vis_best and epoch + 1 >= params.best_start
-            ):
-                # already gathered and computed for best tracking
-                combined_accuracy_data = (
-                    acc_cache[0] if acc_cache is not None else None
-                )
-            else:
-                combined_accuracy_data = utils_learning.combine_accuracy_data(
-                    z_train,
-                    y_train,
-                    z_val,
-                    y_val,
-                    rank_zero=rank_zero,
-                    world_size=fabric.world_size,
-                )
-
-            if rank_zero:
-                assert combined_accuracy_data is not None
-                (
-                    z_train_all,
-                    y_train_all,
-                    z_val_all,
-                    y_val_all,
-                ) = combined_accuracy_data
-                if acc_cache is not None:
-                    _, train_acc, val_acc, ypred_train, ypred_val = acc_cache
-                else:
-                    (
-                        train_acc,
-                        val_acc,
-                        _,
-                        ypred_train,
-                        ypred_val,
-                    ) = utils_learning.accuracy(
-                        z_train_all,
-                        y_train_all,
-                        z_val_all,
-                        y_val_all,
-                        classifier=params.classifier,
-                    )
-
-                logging.info(
-                    "------------------->>> Overall accuracy: Train: %f | Val: %f\n"
-                    % (train_acc, val_acc),
-                )
-                vis.confusion_plot(
-                    y_train_all,
-                    ypred_train,
-                    y_val_all,
-                    ypred_val,
-                    epoch=epoch,
-                    vis_format=params.vis_format,
-                    vis_print=params.vis_print,
-                )
-
-                vis.f1_plot(
-                    y_train_all,
-                    ypred_train,
-                    y_val_all,
-                    ypred_val,
-                    epoch=epoch,
-                    vis_format=params.vis_format,
-                    vis_print=params.vis_print,
-                )
-
         # visualise loss
-        if rank_zero and params.vis_los and epoch > 0:
+        if rank_zero and los_due:
             p = [
                 len(trains),
                 params.depth,
@@ -665,12 +647,32 @@ def train(params):
                 vis_print=params.vis_print,
             )
 
+        # visualise accuracy: confusion and F1 scores (computed under
+        # COMPUTE RESULTS; is_best implies it was computed this epoch)
+        if rank_zero and acc_due and acc_cache is not None:
+            (_, y_train_all, _, y_val_all), ypred_train, ypred_val = acc_cache
+            vis.confusion_plot(
+                y_train_all,
+                ypred_train,
+                y_val_all,
+                ypred_val,
+                epoch=epoch,
+                vis_format=params.vis_format,
+                vis_print=params.vis_print,
+            )
+
+            vis.f1_plot(
+                y_train_all,
+                ypred_train,
+                y_val_all,
+                ypred_val,
+                epoch=epoch,
+                vis_format=params.vis_format,
+                vis_print=params.vis_print,
+            )
+
         # visualise reconstructions - last batch
-        if (
-            rank_zero
-            and params.vis_rec
-            and ((epoch + 1) % params.freq_rec == 0 or is_best)
-        ):
+        if rank_zero and rec_due:
             vis.recon_plot(
                 x,
                 x_hat,
@@ -690,25 +692,57 @@ def train(params):
                 vis_print=params.vis_print,
             )
 
+        # similarity, traversals and interpolations use the latents of all
+        # ranks, so they see the whole training set and not one GPU's share
+        if dis_due or pos_due or int_due or sim_due:
+            gathered = utils_learning.combine_rank_data(
+                (
+                    z_train,
+                    y_train,
+                    p_train if pose else [],
+                    z_val,
+                    y_val,
+                    p_val if pose else [],
+                ),
+                rank_zero=rank_zero,
+                world_size=fabric.world_size,
+            )
+            if rank_zero:
+                assert gathered is not None
+                z_trn, y_trn, p_trn, z_vld, y_vld, p_vld = gathered
+                if not pose:
+                    p_trn = p_vld = None
+
+        # a vis_class that is not in the data stops every rank, not only
+        # rank 0 (which makes the per-class plots), so none is left waiting
+        if params.vis_class and (dis_due or pos_due):
+            class_error = ""
+            if rank_zero:
+                try:
+                    utils_vis.requested_classes(
+                        y_trn, params.vis_class, "vis_class"
+                    )
+                except ValueError as e:
+                    class_error = str(e)
+            class_error = fabric.broadcast(class_error, src=0)
+            if class_error:
+                raise ValueError(class_error)
+
         # visualise mean and logvar similarity matrix
-        if (
-            rank_zero
-            and params.vis_sim
-            and ((epoch + 1) % params.freq_sim == 0 or is_best)
-        ):
+        if rank_zero and sim_due:
             vis.latent_space_similarity_plot(
-                z_train,
-                np.array(y_train),
-                mode="_train",
+                z_trn,
+                np.array(y_trn),
+                mode="trn",
                 epoch=epoch,
                 affinity_matrix=params.affinity,
                 vis_format=params.vis_format,
                 vis_print=params.vis_print,
             )
             vis.latent_space_similarity_plot(
-                z_val,
-                np.array(y_val),
-                mode="_valid",
+                z_vld,
+                np.array(y_vld),
+                mode="val",
                 epoch=epoch,
                 affinity_matrix=params.affinity,
                 vis_format=params.vis_format,
@@ -716,7 +750,7 @@ def train(params):
             )
 
         # visualise embeddings
-        if static_embedding_due:
+        if rank_zero and emb_due:
             vis.latent_embed_plot_tsne(
                 embedding_xs,
                 embedding_ys,
@@ -737,7 +771,7 @@ def train(params):
                     embedding=pose_embedding,
                 )
 
-        if dynamic_embedding_due:
+        if rank_zero and dynamic_due:
             # merge img and rec into one image for display in altair
             dynamic_meta_df = combined_meta_df.copy()
             dynamic_meta_df["image"] = dynamic_meta_df["image"].apply(
@@ -748,49 +782,48 @@ def train(params):
             )
 
         # visualise latent disentanglement
-        if (
-            rank_zero
-            and params.vis_dis
-            and ((epoch + 1) % params.freq_dis == 0 or is_best)
-        ):
-            if not pose:
-                poses = None
-            else:
-                poses = p_train
+        if rank_zero and dis_due:
             vis.latent_disentamglement_plot(
                 dshape,
-                z_train,
+                z_trn,
                 vae,
                 device,
-                poses=p_train if pose else None,
+                poses=p_trn,
                 vis_format=params.vis_format,
                 vis_print=params.vis_print,
             )
+            if params.vis_class:
+                vis.latent_class_disentanglement_plot(
+                    dshape,
+                    z_trn,
+                    y_trn,
+                    params.vis_class,
+                    vae,
+                    device,
+                    poses=p_trn,
+                    vis_format=params.vis_format,
+                    vis_print=params.vis_print,
+                )
 
         # visualise pose disentanglement
-        if (
-            rank_zero
-            and pose
-            and params.vis_pos
-            and ((epoch + 1) % params.freq_pos == 0 or is_best)
-        ):
+        if rank_zero and pos_due:
             vis.pose_disentanglement_plot(
                 dshape,
-                z_train,
-                p_train,
+                z_trn,
+                p_trn,
                 vae,
                 device,
                 vis_format=params.vis_format,
                 vis_print=params.vis_print,
             )
 
-            if params.vis_pose_class is not None:
+            if params.vis_class:
                 vis.pose_class_disentanglement_plot(
                     dshape,
-                    z_train,
-                    y_train,
-                    params.vis_pose_class,
-                    p_train,
+                    z_trn,
+                    y_trn,
+                    params.vis_class,
+                    p_trn,
                     vae,
                     device,
                     vis_format=params.vis_format,
@@ -798,38 +831,11 @@ def train(params):
                 )
 
         # visualise interpolations
-        if (
-            rank_zero
-            and params.vis_int
-            and ((epoch + 1) % params.freq_int == 0 or is_best)
-        ):
-            if len(z_test) != 0:  # test latents only exist on freq_eval epochs
-                xs = np.r_[z_train, z_val, z_test]
-                ys = np.r_[y_train, y_val, np.ones(len(z_test))]
-                if pose:
-                    ps = np.r_[p_train, p_val, p_test]
-                else:
-                    ps = None
-            else:
-                xs = np.r_[z_train, z_val]
-                ys = np.r_[y_train, y_val]
-                if pose:
-                    ps = np.r_[p_train, p_val]
-                else:
-                    ps = None
-
-            if params.vis_z_n_int is not None:
-                vis.latent_4enc_interpolate_plot(
-                    dshape,
-                    xs,
-                    ys,
-                    vae,
-                    device,
-                    params.vis_z_n_int,
-                    poses=ps,
-                    vis_format=params.vis_format,
-                    vis_print=params.vis_print,
-                )
+        if rank_zero and int_due:
+            # train and val only, test latents are not used here
+            xs = np.r_[z_trn, z_vld]
+            ys = np.r_[y_trn, y_vld]
+            ps = np.r_[p_trn, p_vld] if pose else None
 
             vis.interpolations_plot(
                 dshape,

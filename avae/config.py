@@ -244,49 +244,57 @@ class AffinityConfig(pydantic.BaseModel):
     vis_int: bool = pydantic.Field(
         False, description="Visualise latent space interpolation"
     )
-    vis_z_n_int: None | str = pydantic.Field(
-        None,
-        description="Visualise latent space interpolation for specific z and n",  # TODO write better explaination
-    )
     vis_dis: bool = pydantic.Field(
         False,
         description="Visualise latent space disentanglement for each dimension",
     )
+    vis_class: None | str = pydantic.Field(
+        None,
+        description="Comma separated classes for the per class latent "
+        "(with vis_dis) and pose (with vis_pos) disentanglement plots",
+    )
     vis_pos: bool = pydantic.Field(
         False, description="Visualise pose interpolation"
-    )
-    vis_pose_class: None | str = pydantic.Field(
-        None, description="Visualise pose per class interpolation"
     )
     vis_all: bool | None = pydantic.Field(None, description="Visualise all")
 
     ### Frequency parameters
-    freq_acc: pydantic.PositiveInt = pydantic.Field(
-        10, description="Frequency (in epochs) of accuracy plot"
+    freq_acc: pydantic.NonNegativeInt = pydantic.Field(
+        10,
+        description="Frequency (in epochs) of accuracy plot (0: only best epochs with vis_best)",
     )
-    freq_rec: pydantic.PositiveInt = pydantic.Field(
-        10, description="Frequency (in epochs) of reconstruction plot"
+    freq_rec: pydantic.NonNegativeInt = pydantic.Field(
+        10,
+        description="Frequency (in epochs) of reconstruction plot (0: only best epochs with vis_best)",
     )
-    freq_emb: pydantic.PositiveInt = pydantic.Field(
-        10, description="Frequency (in epochs) of latent space plot"
+    freq_emb: pydantic.NonNegativeInt = pydantic.Field(
+        10,
+        description="Frequency (in epochs) of latent space plot (0: only best epochs with vis_best)",
     )
-    freq_dynamic: pydantic.PositiveInt = pydantic.Field(
-        10, description="Frequency (in epochs) of dynamic latent space plot"
+    freq_dynamic: pydantic.NonNegativeInt = pydantic.Field(
+        10,
+        description="Frequency (in epochs) of dynamic latent space plot (0: only best epochs with vis_best)",
     )
-    freq_sim: pydantic.PositiveInt = pydantic.Field(
-        10, description="Frequency (in epochs) of similarity plot"
+    freq_sim: pydantic.NonNegativeInt = pydantic.Field(
+        10,
+        description="Frequency (in epochs) of similarity plot (0: only best epochs with vis_best)",
     )
-    freq_int: pydantic.PositiveInt = pydantic.Field(
-        10, description="Frequency (in epochs) of interpolation plot"
+    freq_int: pydantic.NonNegativeInt = pydantic.Field(
+        10,
+        description="Frequency (in epochs) of interpolation plot (0: only best epochs with vis_best)",
     )
-    freq_dis: pydantic.PositiveInt = pydantic.Field(
-        10, description="Frequency (in epochs) of disentanglement plot"
+    freq_dis: pydantic.NonNegativeInt = pydantic.Field(
+        10,
+        description="Frequency (in epochs) of disentanglement plot (0: only best epochs with vis_best)",
     )
-    freq_pos: pydantic.PositiveInt = pydantic.Field(
-        10, description="Frequency (in epochs) of pose plot"
+    freq_pos: pydantic.NonNegativeInt = pydantic.Field(
+        10,
+        description="Frequency (in epochs) of pose plot (0: only best epochs with vis_best)",
     )
-    freq_all: pydantic.PositiveInt | None = pydantic.Field(
-        None, description="Frequency (in epochs) of all plots"
+    freq_all: pydantic.NonNegativeInt | None = pydantic.Field(
+        None,
+        description="Frequency (in epochs) of all plots, and of freq_sta and "
+        "freq_eval unless 0 (0: plots only at best epochs with vis_best)",
     )
 
     #### Setup
@@ -428,15 +436,14 @@ def load_config_params(
             and params['vis_all'] is not None
             and key not in command_line_params
         ):
-            # set visualisation to vis_all if it is not set, except for vis_z_n_int and vis_pose_class
+            # set visualisation to vis_all if it is not set, except for vis_class
             if key in [
                 'vis_all',
                 'vis_format',
                 'vis_print',
                 'vis_epochs',
                 'vis_best',
-                'vis_z_n_int',
-                'vis_pose_class',
+                'vis_class',
             ]:
                 continue
             params[key] = params['vis_all']
@@ -449,8 +456,12 @@ def load_config_params(
             and params['freq_all'] is not None
             and key not in command_line_params
         ):
-            # set frequency to freq_all if it is not set
-            if key in ['freq_all']:
+            # set frequency to freq_all if it is not set; freq_all 0 means
+            # plots only at best epochs, it does not stop checkpoints or
+            # test encoding
+            if key == 'freq_all' or (
+                params['freq_all'] == 0 and key in ['freq_sta', 'freq_eval']
+            ):
                 continue
             params[key] = params['freq_all']
             if rank_zero:
@@ -472,7 +483,8 @@ def load_config_params(
         ):
             if params[f"vis_{name}"] and params[f"freq_{name}"] == 0:
                 logging.warning(
-                    f"Parameter {key} is set to True but its frequency is 0. Setting to {freq} epochs."
+                    f"vis_{name} is set but freq_{name} is 0 and vis_best is "
+                    "off, so it will never be plotted."
                 )
 
     # vis_best can only save plots that are enabled, from best_start onward

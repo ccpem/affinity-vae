@@ -139,8 +139,8 @@ def evaluate(params):
         # if labels are present save them otherwise save test
         try:
             y_test.extend(label)
-        except IndexError:
-            np.full(shape=len(t), fill_value="test")
+        except (IndexError, TypeError):
+            y_test.extend(["test"] * len(t))
         if tlat_pose is not None:
             p_test.extend(tlat_pose.cpu().detach().numpy())
 
@@ -183,9 +183,13 @@ def evaluate(params):
     if embedding_due:
         latent_columns = [col for col in meta_df if col.startswith("lat")]
         embedding_xs = meta_df[latent_columns].to_numpy()
-        embedding_ys = meta_df["id"].to_numpy()
+        embedding_ys = meta_df["id"].to_numpy().astype(object)
         latent_embedding = utils_learning.tsne_embedding(embedding_xs)
         eval_mask = meta_df["mode"].to_numpy() == "evl"
+        # plot labels only: mark evaluation samples
+        embedding_ys[eval_mask] = utils_vis.plot_labels(
+            embedding_ys[eval_mask], "eval"
+        )
 
     # visualise reconstructions - last batch
     if params.vis_rec:
@@ -194,7 +198,7 @@ def evaluate(params):
             t_hat,
             y_test,
             data_dim,
-            mode="evl",
+            mode="eval",
             vis_format=params.vis_format,
             vis_print=params.vis_print,
         )
@@ -207,10 +211,28 @@ def evaluate(params):
             vae,
             device,
             poses=p_test,
-            mode="_eval",
+            mode="eval",
             vis_format=params.vis_format,
             vis_print=params.vis_print,
         )
+        if params.vis_class and len(y_test) != len(z_test):
+            logging.warning(
+                "Test labels do not match test latents, skipping per-class "
+                "latent disentanglement plot."
+            )
+        elif params.vis_class:
+            vis.latent_class_disentanglement_plot(
+                dshape,
+                z_test,
+                np.array(y_test),
+                params.vis_class,
+                vae,
+                device,
+                poses=p_test,
+                mode="eval",
+                vis_format=params.vis_format,
+                vis_print=params.vis_print,
+            )
 
     # visualise pose disentanglement
     if pose_dims != 0 and params.vis_pos:
@@ -220,37 +242,42 @@ def evaluate(params):
             p_test,
             vae,
             device,
-            mode="_eval",
+            mode="eval",
             vis_format=params.vis_format,
             vis_print=params.vis_print,
         )
 
-    if pose_dims != 0 and params.vis_pose_class:
+    if pose_dims != 0 and params.vis_pos and params.vis_class:
         vis.pose_class_disentanglement_plot(
             dshape,
             z_test,
             y_test,
-            params.vis_pose_class,
+            params.vis_class,
             p_test,
             vae,
             device,
-            mode="_eval",
+            mode="eval",
             vis_format=params.vis_format,
             vis_print=params.vis_print,
         )
     # visualise interpolations
     if params.vis_int:
-        vis.interpolations_plot(
-            dshape,
-            z_test,
-            np.ones(len(z_test)),
-            vae,
-            device,
-            poses=p_test,
-            mode="_eval",
-            vis_format=params.vis_format,
-            vis_print=params.vis_print,
-        )
+        if len(y_test) == len(z_test):
+            vis.interpolations_plot(
+                dshape,
+                z_test,
+                np.array(y_test),
+                vae,
+                device,
+                poses=p_test,
+                mode="eval",
+                vis_format=params.vis_format,
+                vis_print=params.vis_print,
+            )
+        else:
+            logging.warning(
+                "Skipping interpolation plot: test labels do not match test latents."
+            )
 
     # visualise embeddings
     if params.vis_emb:
@@ -258,7 +285,7 @@ def evaluate(params):
             embedding_xs[eval_mask],
             embedding_ys[eval_mask],
             classes_list,
-            "_eval",
+            "eval",
             vis_format=params.vis_format,
             vis_print=params.vis_print,
             embedding=latent_embedding[eval_mask],
@@ -267,8 +294,8 @@ def evaluate(params):
     if params.vis_sim:
         vis.latent_space_similarity_plot(
             z_test,
-            np.array(y_test),
-            mode="_eval",
+            utils_vis.plot_labels(y_test, "eval"),
+            mode="eval",
             vis_format=params.vis_format,
             vis_print=params.vis_print,
         )
@@ -287,7 +314,7 @@ def evaluate(params):
         vis.dyn_latentembed_plot(
             dynamic_meta_df,
             0,
-            mode="_eval",
+            mode="eval",
             embedding=latent_embedding,
         )
 
@@ -297,7 +324,7 @@ def evaluate(params):
             embedding_xs,
             embedding_ys,
             classes_list,
-            "_train_eval_comparison",
+            "trn_eval_comparison",
             vis_format=params.vis_format,
             vis_print=params.vis_print,
             embedding=latent_embedding,
@@ -327,7 +354,7 @@ def evaluate(params):
         y_test,
         ypred_val,
         params.classes,
-        mode="_eval",
+        mode="eval",
         vis_format=params.vis_format,
         vis_print=params.vis_print,
     )
@@ -336,7 +363,7 @@ def evaluate(params):
         ypred_train,
         y_test,
         ypred_val,
-        mode="_eval",
+        mode="eval",
         vis_format=params.vis_format,
         vis_print=params.vis_print,
     )
