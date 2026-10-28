@@ -12,4 +12,3 @@ scikit-learn
 scipy
 torch
 torchvision
-umap-learn

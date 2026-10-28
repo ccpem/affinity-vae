@@ -12,7 +12,6 @@ import numpy.typing as npt
 import pandas as pd
 import qtpy
 import torch
-import umap
 
 
 class CartesianAxes(enum.Enum):
@@ -27,6 +26,13 @@ class CartesianAxes(enum.Enum):
 
 
 MAX_UMAP = 100.0
+
+UMAP_IMPORT_MESSAGE = (
+    "The 'umap' manifold needs the umap-learn package, which is not "
+    "installed. Install it with `pip install -e \".[napari]\"` (in the Napari "
+    "environment) or run with `--manifold load` to use the embedding stored "
+    "in the meta file instead."
+)
 
 
 def process(
@@ -95,7 +101,10 @@ class GenerativeAffinityVAEWidget(qtpy.QtWidgets.QWidget):
         self._meta_df = meta_df  # Store the DataFrame
         self.pose_dims = int(pose_dims)
         self._latent_dims = int(latent_dims)  # Number of latent dimensions
-        self.cartesian = True  # Keeping this as false and as a placeholder as we havent implemented cartesian pose space yet
+        # The splat decoder takes either 1 pose value (angle about z) or 4
+        # (axis-angle: theta, ax, ay, az). With 4 we offer theta + axis
+        # controls, otherwise one slider per pose dimension (none for 0).
+        self.axis_angle = self.pose_dims == 4
 
         self._main_layout = qtpy.QtWidgets.QVBoxLayout()
         self._tabs = qtpy.QtWidgets.QTabWidget()
@@ -130,10 +139,25 @@ class GenerativeAffinityVAEWidget(qtpy.QtWidgets.QWidget):
 
         self._latent_range_min = latent_space.min(axis=0)
         self._latent_range_max = latent_space.max(axis=0)
-        self._pose_range_min = pose_space.min(axis=0)
-        self._pose_range_max = pose_space.max(axis=0)
+        # One (min, max) range per pose dimension, from the pose columns of
+        # the meta file; fall back to [-pi, pi] if a column is missing.
+        pose_min = np.full(self.pose_dims, -np.pi, dtype=np.float64)
+        pose_max = np.full(self.pose_dims, np.pi, dtype=np.float64)
+        n_meta = min(self.pose_dims, pose_space.shape[1])
+        if n_meta > 0:
+            pose_min[:n_meta] = pose_space[:, :n_meta].min(axis=0)
+            pose_max[:n_meta] = pose_space[:, :n_meta].max(axis=0)
+        flat = pose_max <= pose_min
+        pose_min[flat] -= 0.5
+        pose_max[flat] += 0.5
+        self._pose_range_min = pose_min
+        self._pose_range_max = pose_max
 
         if self.manifold == "umap":
+            try:
+                import umap
+            except ImportError as e:
+                raise ImportError(UMAP_IMPORT_MESSAGE) from e
             self._mapper = umap.UMAP(random_state=42, n_jobs=1)
             self._embedding = self._mapper.fit_transform(latent_space)
         elif self.manifold == "load":
@@ -158,27 +182,33 @@ class GenerativeAffinityVAEWidget(qtpy.QtWidgets.QWidget):
 
     def add_pose_widget(self) -> None:
         """Add widgets to manipulate the model pose space."""
-        pose_axes = qtpy.QtWidgets.QComboBox()
-        if self.cartesian:
-            pose_axes.addItems(["X", "Y", "Z"])
+        if self.pose_dims == 0:
+            return
+
+        def _slider() -> qtpy.QtWidgets.QSlider:
+            slider = qtpy.QtWidgets.QSlider(qtpy.QtCore.Qt.Horizontal)
+            slider.setRange(0, 1000)
+            slider.setValue(500)
+            slider.setMinimumWidth(300)
+            return slider
+
+        pose_widgets: dict = {}
+        if self.axis_angle:
+            pose_axes = qtpy.QtWidgets.QComboBox()
+            pose_axes.addItems([axis.name for axis in CartesianAxes])
+            pose_axes.setCurrentText("Z")
+            pose_axes.currentIndexChanged.connect(self.update_reconstruction)
+            pose_widgets["axes"] = pose_axes
+            pose_widgets["theta"] = _slider()
         else:
             for dim in range(self.pose_dims):
-                pose_axes.addItems(["pose" + str(dim)])
-        pose_value = qtpy.QtWidgets.QSlider(qtpy.QtCore.Qt.Horizontal)
-        pose_value.setRange(0, 1000)
-        pose_value.setValue(500)
-        pose_value.setMinimumWidth(300)
-
-        pose_widgets = {
-            "axes": pose_axes,
-            "theta": pose_value,
-        }
+                pose_widgets[f"pose{dim}"] = _slider()
 
         self._widgets.update(pose_widgets)
 
         layout = qtpy.QtWidgets.QFormLayout()
         for label, widget in pose_widgets.items():
-            if label == "theta":
+            if label != "axes":
                 widget.valueChanged.connect(self.update_reconstruction)
             label_widget = qtpy.QtWidgets.QLabel(label)
             layout.addRow(label_widget, widget)
@@ -234,21 +264,28 @@ class GenerativeAffinityVAEWidget(qtpy.QtWidgets.QWidget):
         )
 
     def get_pose(self) -> npt.NDArray:
+        if self.pose_dims == 0:
+            return np.zeros(0, dtype=np.float32)
 
-        if self.cartesian:
+        if self.axis_angle:
             theta = scale_from_slider(
-                self._widgets["theta"].value(), np.pi, 2 * np.pi
+                self._widgets["theta"].value(), 0.0, 2 * np.pi
             )
             axis = CartesianAxes[str(self._widgets["axes"].currentText())]
             return np.array([theta, *axis.value], dtype=np.float32)
 
-        else:
-            theta = scale_from_slider(
-                self._widgets["theta"].value(),
-                self._pose_range_min,
-                self._pose_range_max,
-            )
-            return np.array(theta, dtype=np.float32)
+        values = np.array(
+            [
+                self._widgets[f"pose{dim}"].value()
+                for dim in range(self.pose_dims)
+            ]
+        )
+        return np.array(
+            scale_from_slider(
+                values, self._pose_range_min, self._pose_range_max
+            ),
+            dtype=np.float32,
+        )
 
     def get_state(self) -> tuple[float, npt.NDArray]:
         pose = self.get_pose()
@@ -365,6 +402,11 @@ class GenerativeAffinityVAEWidget(qtpy.QtWidgets.QWidget):
                     centroid[0], centroid[1], str(label)
                 )
 
+        self._axis_name = "UMAP" if self.manifold == "umap" else "Embedding"
         self._widgets["manifold"].axes.set_aspect("equal")
-        self._widgets["manifold"].axes.get_xaxis().set_label_text("UMAP-1")
-        self._widgets["manifold"].axes.get_yaxis().set_label_text("UMAP-2")
+        self._widgets["manifold"].axes.get_xaxis().set_label_text(
+            f"{self._axis_name}-1"
+        )
+        self._widgets["manifold"].axes.get_yaxis().set_label_text(
+            f"{self._axis_name}-2"
+        )

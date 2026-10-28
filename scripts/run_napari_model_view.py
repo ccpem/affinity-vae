@@ -3,7 +3,7 @@ import numpy as np
 import pandas as pd
 import torch
 
-from avae.napari import GenerativeAffinityVAEWidget
+from avae.napari import UMAP_IMPORT_MESSAGE, GenerativeAffinityVAEWidget
 
 
 def setup_napari():
@@ -100,12 +100,14 @@ if __name__ == "__main__":
         help="Number of pose dimensions. This will overwrite the internal model value.",
         default=None,
         required=False,
+        type=int,
     )
     parser.add_argument(
         "--latent_dims",
         help="Number of latent dimensions. This will overwrite the internal model value.",
         default=None,
         required=False,
+        type=int,
     )
 
     args = parser.parse_args()
@@ -118,6 +120,12 @@ if __name__ == "__main__":
 
     if manifold != "umap" and manifold != "load":
         raise ValueError("Manifold must be either \"umap\" or \"load\".")
+
+    if manifold == "umap":
+        try:
+            import umap  # noqa: F401
+        except ImportError as e:
+            raise ImportError(UMAP_IMPORT_MESSAGE) from e
 
     print("Running napari viewer with model: {}".format(model_fn))
     run_napari(model_fn, meta_fn, ldim, pdim, manifold)

@@ -134,7 +134,7 @@ jobs.
 
 The Napari viewer needs `pydantic<2`, which the training code cannot use, so
 install it in its own environment with `pip install -e ".[napari]"`. See
-[scripts/README.md](scripts/README.md).
+[Inspecting results with Napari](#inspecting-results-with-napari).
 
 ## Preparing your data
 
@@ -677,10 +677,80 @@ QoS, environment path and config path at the top of the script first.
 ## Inspecting results with Napari
 
 [scripts/run_napari_model_view.py](scripts/run_napari_model_view.py) opens an
-interactive Napari viewer: click on the latent embedding to decode points and
-move along latent and pose dimensions. Give it a checkpoint (`states/*.pt`) and a
-metadata file (`states/*.pkl`). Setup and usage are in
-[scripts/README.md](scripts/README.md).
+interactive Napari viewer for a trained model: decode any point of the latent
+embedding, and move along individual latent and pose dimensions to see the
+decoder's reconstruction.
+
+### Why a separate environment
+
+Napari needs `pydantic<2`, while the training code needs `pydantic>2`. They
+cannot share one environment, so install the viewer in its own virtual
+environment. Do not use it for training, and do not install `[napari]` into
+your training environment. From the repository root:
+
+```bash
+python -m venv env_napari
+source env_napari/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -e ".[napari]"
+```
+
+The `napari` extra also installs `umap-learn`, which is not a dependency of the
+training environment.
+
+### Running it
+
+```bash
+python scripts/run_napari_model_view.py \
+  --model_file <run>/states/<model>.pt \
+  --meta_file  <run>/states/<meta>.pkl
+```
+
+- `--model_file`: a checkpoint from the run's `states/` directory (the best or
+  the latest one).
+- `--meta_file`: the metadata `.pkl` from the same run (also in `states/`). It
+  holds each sample's `id`, latents (`lat*`), poses (`pos*`) and stored 2D
+  embedding (`emb*`).
+- `--manifold umap|load` (default `umap`):
+  - `umap` fits a UMAP on the stored latents when the viewer starts. A click
+    anywhere on the map is decoded through UMAP's `inverse_transform`, so you can
+    explore regions with no data. It is slower, and the map differs from the
+    t-SNE plots made in training. t-SNE cannot be inverted, so it is not offered.
+  - `load` uses the embedding stored in the meta file and snaps a click to the
+    nearest stored sample, whose latent is decoded. It is fast and needs no
+    `umap-learn`, but only reproduces latents that exist in the data.
+- `--latent_dims`, `--pose_dims`: optional integers that override the values
+  read from the model (`encoder.mu` / `encoder.pose_fc`). Set them if the model
+  has no such attributes.
+
+### The widgets
+
+- **Latents tab**: one slider per latent dimension, ranging over the min and max
+  of that dimension in the meta file. Moving one re-decodes the volume.
+- **Pose group**, depending on `pose_dims`:
+  - `4`: axis-angle control. A `theta` slider (0 to 2 pi) and an `axes`
+    choice (X, Y or Z) for the rotation axis.
+  - `1` (or any other value): one slider per pose dimension (`pose0`, ...),
+    ranging over the values of that pose column in the meta file. With the
+    splat decoder, a single pose value is a rotation about z.
+  - `0`: no pose controls.
+- **Manifold tab**: a density map of the embedding with class labels at the
+  class centroids. Click to decode that point; the latent sliders jump to the
+  decoded latent.
+
+Here is the interface on a model trained on the Shrec protein dataset:
+![NapariUMAP](images/Napari1.png) ![NapariLatents](images/Napari2.png)
+
+### Common errors
+
+- `ImportError: ... umap-learn`: you are in an environment without the `napari`
+  extra. Run `pip install -e ".[napari]"`, or use `--manifold load`.
+- `pydantic` or `napari` import errors, or training failing in this
+  environment: you mixed the environments. Use the Napari one only for the viewer.
+- `Model does not have pose/latent attributes`: pass `--pose_dims` and
+  `--latent_dims`.
+- Blank or wrong-shaped reconstruction: `--pose_dims` / `--latent_dims` do not
+  match the trained model.
 
 ## Repository layout
 
