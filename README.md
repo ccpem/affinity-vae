@@ -60,7 +60,7 @@ Around the model, the pipeline:
   and can also encode an optional held-out test set,
 - trains on CPU, one GPU or several GPUs (through
   [Lightning Fabric](https://lightning.ai/docs/fabric/)),
-- regularly trains a classifier (MLP or k-nearest neighbours) on the training
+- regularly trains a classifier (MLP, k-nearest neighbours or logistic regression) on the training
   latents and scores it on the validation latents,
 - writes plots (loss, confusion matrices, F1, reconstructions, t-SNE
   embeddings, similarity matrices, interpolations, latent and pose traversals),
@@ -453,7 +453,7 @@ normalise.
 | `batch` | `16` | Batch size (per GPU when using several GPUs). |
 | `learning` | `0.001` | Learning rate. |
 | `opt_method` | `adam` | `adam`, `sgd` or `asgd`. |
-| `classifier` | `NN` | Classifier fitted on the training latents to measure accuracy: `NN` (scikit-learn MLP) or `KNN` (k-nearest neighbours). Both are tuned by grid search on macro F1. `LR` passes validation but is not implemented and fails at the first accuracy step. |
+| `classifier` | `NN` | Classifier fitted on the training latents to measure accuracy: `NN` (scikit-learn MLP, adam solver), `KNN` (k-nearest neighbours) or `LR` (logistic regression). All are tuned by grid search on macro F1. |
 | `gpu` | on | Use CUDA GPUs if present, otherwise CPU. |
 | `gpu_devices` | none | Comma-separated GPU indices, e.g. `0,1,3`. Default: all visible, working GPUs. |
 | `strategy` | `auto` | Lightning multi-GPU strategy: `auto`, `ddp`, `deepspeed` or `fsdp`. Falls back to `auto` on a single GPU. |
@@ -807,8 +807,6 @@ Tests marked `integration` run short end-to-end trainings. Pytest is set up in
 - **`--restart` is broken**: resuming training stops with a `NameError` (the
   `state` variable is not set in `avae/train.py`). Until this is fixed, start a
   new run instead.
-- **`classifier: LR`** passes config validation but is not implemented and
-  fails at the first accuracy computation. Use `NN` or `KNN`.
 - On/off options that default to on, and `filters`, can only be changed in a
   config file (see
   [Three ways to set parameters](#three-ways-to-set-parameters)).

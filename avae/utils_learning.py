@@ -4,6 +4,7 @@ import typing
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
+import sklearn.linear_model
 import sklearn.manifold
 import sklearn.metrics
 import sklearn.model_selection
@@ -69,7 +70,7 @@ def accuracy(
         method = sklearn.neural_network.MLPClassifier(
             max_iter=10000,
             activation="relu",
-            solver="lbfgs",
+            solver="adam",
             tol=1e-2,
             random_state=1,
             alpha=1,
@@ -77,6 +78,9 @@ def accuracy(
     elif classifier == "KNN":
         parameters = {"n_neighbors": range(1, 500, 100)}
         method = sklearn.neighbors.KNeighborsClassifier()
+    elif classifier == "LR":
+        parameters = {"C": [0.01, 0.1, 1, 10, 100]}
+        method = sklearn.linear_model.LogisticRegression(max_iter=1000)
     else:
         raise ValueError("Invalid classifier type must be NN, KNN or LR")
 
