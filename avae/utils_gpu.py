@@ -1,4 +1,5 @@
 import logging
+import os
 
 import lightning as lt
 import torch
@@ -64,12 +65,16 @@ def setup_gpus(
     strategy: str,
 ) -> lt.Fabric:
     """Build a Lightning Fabric object with CPU/GPU settings."""
-    logging.info("\n")
-    logging.info("############################################### GPU")
-    logging.info(f"Setting up GPUs...")
+    # runs before Fabric exists; extra GPU processes get LOCAL_RANK > 0
+    rank_zero = os.environ.get("LOCAL_RANK", "0") == "0"
+    if rank_zero:
+        logging.info("\n")
+        logging.info("############################################### GPU")
+        logging.info(f"Setting up GPUs...")
 
     n_devices = torch.cuda.device_count()
-    logging.info('GPus available: {}'.format(n_devices))
+    if rank_zero:
+        logging.info('GPus available: {}'.format(n_devices))
 
     if n_devices > 0 and gpu:
         accelerator = 'gpu'
@@ -92,8 +97,10 @@ def setup_gpus(
             )
 
         n_devices = len(usable_devices)
-        if (not manual_device_selection) and n_devices < len(
-            requested_devices
+        if (
+            rank_zero
+            and (not manual_device_selection)
+            and n_devices < len(requested_devices)
         ):
             logging.warning(
                 "Only %s/%s requested CUDA devices are usable. Launching on usable devices: %s",
@@ -102,7 +109,7 @@ def setup_gpus(
                 usable_devices,
             )
 
-        if manual_device_selection:
+        if rank_zero and manual_device_selection:
             logging.info(
                 "GPU manual mode enabled. Launching with requested CUDA devices: %s",
                 usable_devices,
@@ -113,10 +120,11 @@ def setup_gpus(
 
         selected_strategy = strategy
         if n_devices == 1 and strategy in {"ddp", "deepspeed", "fsdp"}:
-            logging.warning(
-                "Requested strategy '%s' requires multi-device execution; falling back to 'auto' for single usable GPU.",
-                strategy,
-            )
+            if rank_zero:
+                logging.warning(
+                    "Requested strategy '%s' requires multi-device execution; falling back to 'auto' for single usable GPU.",
+                    strategy,
+                )
             selected_strategy = 'auto'
 
         if n_devices <= 4:
@@ -125,9 +133,10 @@ def setup_gpus(
             # Baskerville has 4 GPUs per node.
             n_nodes = (n_devices + 3) // 4
 
-        logging.info(
-            f'Setting up fabric with strategy {selected_strategy}, accelerator {accelerator}, devices {usable_devices}, num_nodes {n_nodes}'
-        )
+        if rank_zero:
+            logging.info(
+                f'Setting up fabric with strategy {selected_strategy}, accelerator {accelerator}, devices {usable_devices}, num_nodes {n_nodes}'
+            )
         return lt.Fabric(
             strategy=selected_strategy,
             accelerator=accelerator,

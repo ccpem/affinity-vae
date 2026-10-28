@@ -334,9 +334,13 @@ def load_config_params(
         Dictionary of configuration parameters.
     """
 
-    logging.info("\n")
-    logging.info("############################################### CONFIG")
-    logging.info(f"Loading configuration parameters...")
+    # every GPU process loads the config; only the first one logs, errors
+    # are logged by all (extra GPU processes get LOCAL_RANK > 0)
+    rank_zero = os.environ.get("LOCAL_RANK", "0") == "0"
+    if rank_zero:
+        logging.info("\n")
+        logging.info("############################################### CONFIG")
+        logging.info(f"Loading configuration parameters...")
 
     if local_args is not None and sys_args is None:
         # this scenario only should happen when this function is called in tests
@@ -359,7 +363,10 @@ def load_config_params(
 
     if config_file is not None:
         # initialise config with config file parameter
-        logging.info("Reading submission configuration file %s", config_file)
+        if rank_zero:
+            logging.info(
+                "Reading submission configuration file %s", config_file
+            )
         with open(config_file, "r") as f:
             loaded_params = yaml.safe_load(f)
             params = loaded_params if isinstance(loaded_params, dict) else {}
@@ -381,7 +388,7 @@ def load_config_params(
                 command_line_params.add(name)
                 # overwrite config file value with command line argument value
                 # but only if its on system args (click has defaults)
-                if name in params.keys():
+                if rank_zero and name in params.keys():
                     logging.warning(
                         "Command line argument "
                         + name
@@ -390,7 +397,7 @@ def load_config_params(
                         + " to: "
                         + str(local_args[name])
                     )
-                else:
+                elif rank_zero:
                     logging.info(
                         "Command line argument "
                         + name
@@ -402,13 +409,15 @@ def load_config_params(
     # validate the config
     try:
         params = AffinityConfig(**params).model_dump()
-        logging.info("Config file is valid")
+        if rank_zero:
+            logging.info("Config file is valid")
     except pydantic.ValidationError as e:
-        logging.info("Config file is invalid:")
-        logging.info(e)
+        logging.error("Config file is invalid:")
+        logging.error(e)
         raise RuntimeError("Config file is invalid: " + str(e))
 
-    logging.info("Polishing config parameters...")
+    if rank_zero:
+        logging.info("Polishing config parameters...")
     for key, val in params.items():
         # logging.info("%s: %s", key, str(val))
         if isinstance(val, pathlib.Path):
@@ -431,9 +440,10 @@ def load_config_params(
             ]:
                 continue
             params[key] = params['vis_all']
-            logging.warning(
-                f"Visualisation parameter 'vis_all' is overriding {key} to {params['vis_all']}"
-            )
+            if rank_zero:
+                logging.warning(
+                    f"Visualisation parameter 'vis_all' is overriding {key} to {params['vis_all']}"
+                )
         if (
             'freq' in key
             and params['freq_all'] is not None
@@ -443,34 +453,30 @@ def load_config_params(
             if key in ['freq_all']:
                 continue
             params[key] = params['freq_all']
-            logging.warning(
-                f"Frequency parameter 'freq_all' is overriding {key} to {params['freq_all']}"
-            )
-        if 'vis' in key and val:
-            # make sure frequency is on for associated vis parameters
-            if key in [
-                'vis_format',
-                'vis_print',
-                'vis_epochs',
-                'vis_best',
-                'vis_his',
-                'vis_aff',
-                'vis_cyc',
-                'vis_los',
-                'vis_z_n_int',
-                'vis_pose_class',
-            ]:
-                # these parameters don't have frequency control
-                continue
-            if params[f"freq_{key.split('_')[-1]}"] == 0:
-                freq = 10 if not params['freq_all'] else params['freq_all']
-                params[f"freq_{key.split('_')[-1]}"] = freq
+            if rank_zero:
+                logging.warning(
+                    f"Frequency parameter 'freq_all' is overriding {key} to {params['freq_all']}"
+                )
+
+    # a plot with frequency 0 is only drawn at best epochs
+    if rank_zero and not params['vis_best']:
+        for name in (
+            "acc",
+            "rec",
+            "emb",
+            "dynamic",
+            "sim",
+            "int",
+            "dis",
+            "pos",
+        ):
+            if params[f"vis_{name}"] and params[f"freq_{name}"] == 0:
                 logging.warning(
                     f"Parameter {key} is set to True but its frequency is 0. Setting to {freq} epochs."
                 )
 
     # vis_best can only save plots that are enabled, from best_start onward
-    if params['vis_best']:
+    if rank_zero and params['vis_best']:
         per_epoch = (
             "acc",
             "rec",
@@ -495,10 +501,11 @@ def load_config_params(
     # validate the new config
     try:
         params = AffinityConfig(**params)
-        logging.info("Config file is still valid")
+        if rank_zero:
+            logging.info("Config file is still valid")
     except pydantic.ValidationError as e:
-        logging.info("Config file is now invalid:")
-        logging.info(e)
+        logging.error("Config file is now invalid:")
+        logging.error(e)
         raise RuntimeError("Config file is now invalid: " + str(e))
 
     # return the validated config object
@@ -516,5 +523,8 @@ def save_config_params(
     with output_path.open("w") as file:
         yaml.safe_dump(params.model_dump(mode="json"), file)
 
-    logging.info("YAML file containing final config saved at: %s", output_path)
+    if os.environ.get("LOCAL_RANK", "0") == "0":
+        logging.info(
+            "YAML file containing final config saved at: %s", output_path
+        )
     return output_path

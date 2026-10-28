@@ -36,6 +36,10 @@ def train(params):
     # start from plots/ in case an earlier run in this process failed mid-epoch
     utils_vis.set_vis_dir(None)
     utils_vis.set_run_id(params.date_time_run)
+    # Lightning logs "Seed set" and "Initializing distributed" from every GPU
+    # process; keep its info messages from the first one only
+    if os.environ.get("LOCAL_RANK", "0") != "0":
+        logging.getLogger("lightning.fabric").setLevel(logging.WARNING)
     lt.pytorch.seed_everything(42)
 
     # ############################### GPU SETUP ################################
@@ -141,6 +145,7 @@ def train(params):
         gsd_conv_layers=params.gsd_conv_layers,
         device=device,
         filters=params.filters,
+        verbose=rank_zero,
     )
 
     # ################################# LOSS #################################
@@ -203,8 +208,11 @@ def train(params):
 
     # ########################## TRAINING LOOP ################################
 
-    logging.info("\n")
-    logging.info("############################################### TRAINING")
+    if rank_zero:
+        logging.info("\n")
+        logging.info(
+            "############################################### TRAINING"
+        )
 
     for epoch in range(e_start, params.epochs):
 

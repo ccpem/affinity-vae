@@ -144,9 +144,11 @@ def load_data(
         Affinity matrix, returned only if eval is False.
     """
 
-    logging.info("\n")
-    logging.info("############################################### DATA")
-    logging.info("Loading data...\n")
+    rank_zero = fabric.global_rank == 0
+    if rank_zero:
+        logging.info("\n")
+        logging.info("############################################### DATA")
+        logging.info("Loading data...\n")
 
     # read the class list, if not provided all classes in the dataset will be used as default
     if classes is not None:
@@ -165,6 +167,7 @@ def load_data(
     if rescale is not None:
         transformations.append(f'rescale={rescale}')
 
+    distributions = {}
     if not eval:
 
         # configure the DiskDataLoader from the caked library with the data parameters
@@ -189,13 +192,7 @@ def load_data(
 
         # for training, we need to load the affinity matrix
         if affinity_path is not None:
-            affinity = get_affinity_matrix(
-                affinity_path,
-                classes_list,
-                vis_aff=vis_aff and fabric.global_rank == 0,
-                vis_format=vis_format,
-                vis_print=vis_print,
-            )
+            affinity = get_affinity_matrix(affinity_path, classes_list)
 
         # assign the affinity matrix to the dataset (small modification from the caked DiskDataset, which only returns data and labels, and we need the affinity matrix indexes for training).
         loader.dataset = AffinityDiskDataset(
@@ -207,34 +204,41 @@ def load_data(
             batch_size=batch, split_size=splt, no_val_drop=no_val_drop
         )
 
-        # Plot the complete splits once, before Fabric shards the loaders.
-        if vis_his and fabric.global_rank == 0:
-            train_y = _labels(trains.dataset)
-            val_y = _labels(vals.dataset)
-            plot_classes_distribution(
-                train_y,
-                "train",
-                vis_format=vis_format,
-                vis_print=vis_print,
-            )
-            plot_classes_distribution(
-                val_y,
-                "validation",
-                vis_format=vis_format,
-                vis_print=vis_print,
-            )
+        # labels of the complete splits, taken before Fabric shards the
+        # loaders, for the class distribution plots made at the end
+        if vis_his and rank_zero:
+            distributions["train"] = _labels(trains.dataset)
+            distributions["validation"] = _labels(vals.dataset)
 
         train_size = len(trains.dataset)
         val_size = len(vals.dataset)
         trains = fabric.setup_dataloaders(trains)
         vals = fabric.setup_dataloaders(vals)
 
-        logging.info("Data size: {}".format(len(loader.dataset)))
-        logging.info("Class list: {}".format(classes_list))
-        logging.info("Train / val split: {}, {}".format(train_size, val_size))
-        logging.info(
-            "Train / val batches: {}, {}\n".format(len(trains), len(vals))
-        )
+        if rank_zero:
+            logging.info("Data size: {}".format(len(loader.dataset)))
+            logging.info("Class list: {}".format(classes_list))
+            logging.info(
+                "Train / val split: {}, {}".format(train_size, val_size)
+            )
+            if fabric.world_size > 1:
+                # each GPU gets the same number of batches
+                logging.info(
+                    "Train / val batches per GPU: {}, {} | total: {}, {} "
+                    "({} GPUs)\n".format(
+                        len(trains),
+                        len(vals),
+                        len(trains) * fabric.world_size,
+                        len(vals) * fabric.world_size,
+                        fabric.world_size,
+                    )
+                )
+            else:
+                logging.info(
+                    "Train / val batches: {}, {}\n".format(
+                        len(trains), len(vals)
+                    )
+                )
 
     tests = []
     if eval or ("test" in os.listdir(datapath)):
@@ -265,19 +269,37 @@ def load_data(
         # get torch dataloader
         tests = test_loader.get_loader(batch_size=batch)
 
-        if vis_his and fabric.global_rank == 0:
-            eval_y = _labels(test_loader.dataset)
-            plot_classes_distribution(
-                eval_y,
-                "evaluation",
-                vis_format=vis_format,
-                vis_print=vis_print,
-            )
+        if vis_his and rank_zero:
+            distributions["evaluation"] = _labels(test_loader.dataset)
 
         tests = fabric.setup_dataloaders(tests)
 
-        logging.info("Eval data size: {}".format(len(test_loader.dataset)))
-        logging.info("Eval batches: {}\n".format(len(tests)))
+        if rank_zero:
+            logging.info("Eval data size: {}".format(len(test_loader.dataset)))
+            if fabric.world_size > 1:
+                logging.info(
+                    "Eval batches per GPU: {} | total: {} ({} GPUs)\n".format(
+                        len(tests),
+                        len(tests) * fabric.world_size,
+                        fabric.world_size,
+                    )
+                )
+            else:
+                logging.info("Eval batches: {}\n".format(len(tests)))
+
+    # plots after the data summary, so the counts are logged together
+    if vis_aff and rank_zero and not eval and affinity_path is not None:
+        get_affinity_matrix(
+            affinity_path,
+            classes_list,
+            vis_aff=True,
+            vis_format=vis_format,
+            vis_print=vis_print,
+        )
+    for split, labels in distributions.items():
+        plot_classes_distribution(
+            labels, split, vis_format=vis_format, vis_print=vis_print
+        )
 
     if eval:
         return tests, test_loader.dataset.dim()
@@ -347,8 +369,11 @@ def get_affinity_matrix(
                 and pathlib.Path(classes_path).read_text() == selected
             ):
                 logging.info(
+                    "################################################################"
+                )
+                logging.info(
                     "Affinity matrix plot is up to date, skipping: "
-                    f"{plot_path}"
+                    f"{plot_path}\n"
                 )
             else:
                 plot_affinity_matrix(

@@ -24,6 +24,7 @@ def accuracy(
     classifier: str = "NN",
 ) -> tuple[float, float, float, npt.NDArray, npt.NDArray]:
     """Compute classification accuracy and predictions for latent vectors."""
+    logging.info("\n")
     logging.info(
         "############################################### Computing accuracy..."
     )
