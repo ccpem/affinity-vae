@@ -23,10 +23,13 @@ from . import utils_learning
 from .utils_vis import (
     VECTOR_FORMATS,
     colour_per_class,
+    copy_saved,
     create_grid_for_plotting,
     fill_grid_for_plottting,
+    interpolate,
     latent_space_similarity_mat,
-    pose_interpolation,
+    plots_path,
+    requested_classes,
     save_figure,
     save_imshow_png,
     save_mrc_file,
@@ -34,6 +37,11 @@ from .utils_vis import (
 
 MAX_CLASS_FIG_SIZE = 20
 MAX_ANNOTATED_CLASSES = 25
+# Pixels cropped from each in-plane edge of a 3D volume's central slice before
+# it is tiled into a grid PNG. This is the reach of the splat decoder's three
+# 3x3 'same' convs, about half the conv decoders' final 4x4 transposed kernel,
+# so the edge pixels are artefacts. Tune later.
+PNG_EDGE_CROP = 3
 _PAD = 0.28  # outer padding in inches, equal on all four sides
 _STYLE: dict[str, typing.Any] = {
     "font.weight": "normal",
@@ -379,6 +387,8 @@ def _confusion_figure(
     os.makedirs(os.path.dirname(stem), exist_ok=True)
     pd.DataFrame(cm).to_csv(f"{stem}.csv", index=False)
     pd.DataFrame(cmn).to_csv(f"{stem}_norm.csv", index=False)
+    copy_saved(f"{stem}.csv")
+    copy_saved(f"{stem}_norm.csv")
 
     _matrix_figure(
         cmn,
@@ -396,6 +406,42 @@ def _confusion_figure(
     )
 
 
+def _central_slice_tiles(images: npt.NDArray) -> npt.NDArray:
+    """Central slice along the first spatial axis of every volume in a
+    (rows, cols, Z, Y, X) array, with PNG_EDGE_CROP pixels cropped from each
+    in-plane edge unless that would remove more than 25% of a side."""
+    tiles = images[:, :, images.shape[2] // 2]
+    crop = PNG_EDGE_CROP
+    if crop > 0 and 2 * crop <= 0.25 * min(tiles.shape[2:]):
+        tiles = tiles[:, :, crop:-crop, crop:-crop]
+    return tiles
+
+
+# number of whole samples decoded per call by the traversal and
+# interpolation plots; the Gaussian splat decoder needs memory proportional
+# to samples x voxels x splats, so decoding all points at once can exceed
+# GPU memory for large volumes
+DECODE_CHUNK = 16
+
+
+def _decode_in_chunks(
+    vae: torch.nn.Module,
+    z_batch: torch.Tensor,
+    pose_batch: torch.Tensor | None,
+    chunk: int = DECODE_CHUNK,
+) -> torch.Tensor:
+    """Decode `z_batch` (with `pose_batch`) in groups of `chunk` whole
+    samples, like training batches, and concatenate the outputs in order.
+    Each chunk's output is moved to the CPU as it is produced."""
+    outputs = []
+    with torch.no_grad():
+        for start in range(0, z_batch.shape[0], chunk):
+            stop = start + chunk
+            pose = None if pose_batch is None else pose_batch[start:stop]
+            outputs.append(vae.decoder(z_batch[start:stop], pose).cpu())
+    return torch.cat(outputs)
+
+
 def _save_grid_figure(
     rows: int,
     cols: int,
@@ -407,8 +453,9 @@ def _save_grid_figure(
     display: bool = False,
     vis_print: bool = False,
 ) -> None:
-    """Arrange `images` into a grid and save it: as an .mrc file for 3D
-    data (`dsize` has 3 dims), or a raster image for 2D data."""
+    """Arrange `images` into a grid and save it: for 3D data (`dsize` has 3
+    dims) as an uncropped .mrc plus a raster image of the central slices, for
+    2D data as a raster image."""
     grid_for_napari = create_grid_for_plotting(rows, cols, dsize, padding)
     grid_for_napari = fill_grid_for_plottting(
         rows, cols, grid_for_napari, dsize, images, padding
@@ -417,6 +464,22 @@ def _save_grid_figure(
     data_dim = len(dsize)
     if data_dim == 3:
         save_mrc_file(f"{name}.mrc", grid_for_napari)
+        tiles = _central_slice_tiles(np.asarray(images))
+        tile_shape = tiles.shape[2:]
+        png_grid = fill_grid_for_plottting(
+            rows,
+            cols,
+            create_grid_for_plotting(rows, cols, tile_shape, padding),
+            tile_shape,
+            tiles,
+            padding,
+        )
+        save_imshow_png(
+            f"{name}.{vis_format}",
+            png_grid,
+            display=display,
+            vis_print=vis_print,
+        )
     elif data_dim == 2:
         save_imshow_png(
             f"{name}.{vis_format}",
@@ -514,7 +577,12 @@ def loss_plot(
             (vlabs[i], val_loss[i], cols[i], "--") for i in range(4)
         ]
     _loss_curve_figure(
-        epochs, full_series, "plots/loss", vis_format, vis_print, title=title
+        epochs,
+        full_series,
+        plots_path("loss", per_epoch=False),
+        vis_format,
+        vis_print,
+        title=title,
     )
 
     # plotting only the total loss as it sometimes is a few order of magnitude higher than KLD and affinity losses
@@ -522,7 +590,11 @@ def loss_plot(
     if val_loss is not None:
         total_series.append((vlabs[0], val_loss[0], cols[0], "--"))
     _loss_curve_figure(
-        epochs, total_series, "plots/loss_total", vis_format, vis_print
+        epochs,
+        total_series,
+        plots_path("loss_total", per_epoch=False),
+        vis_format,
+        vis_print,
     )
 
 
@@ -549,7 +621,7 @@ def plot_cyc_variable(
     _loss_curve_figure(
         len(array),
         [(None, array, None, "-")],
-        f"plots/hyperaparam_{variable_name}",
+        plots_path(f"hyperaparam_{variable_name}", per_epoch=False),
         vis_format,
         vis_print,
         ylabel=rf"$\{variable_name}$",
@@ -566,7 +638,7 @@ def confusion_plot(
     y_val: npt.NDArray,
     ypred_val: npt.NDArray,
     classes: str | None = None,
-    mode: str = "",
+    mode: str = "val",
     epoch: int = 0,
     vis_format: str = "png",
     vis_print: bool = False,
@@ -584,7 +656,7 @@ def confusion_plot(
     ypred_val: np.array
         Predicted validation labels (unseen data).
     mode: str
-        Added data mode to the name of the saved figures (e.g train, valid, eval).
+        Added data mode to the name of the saved figures (trn, val, eval; no leading underscore).
     epoch: int
         Current epoch.
     """
@@ -601,13 +673,17 @@ def confusion_plot(
         (classes_list, np.setdiff1d(classes_eval, classes_list))
     )
 
-    valid_name = {"": "valid", "_eval": "eval"}.get(mode, mode)
     for stem, y, ypred, labels in (
-        (f"confusion_train{mode}", y_train, ypred_train, classes_list),
-        (f"confusion_{valid_name}", y_val, ypred_val, ordered_class_eval),
+        (
+            f"confusion_trn{'' if mode == 'val' else '_' + mode}",
+            y_train,
+            ypred_train,
+            classes_list,
+        ),
+        (f"confusion_{mode}", y_val, ypred_val, ordered_class_eval),
     ):
         _confusion_figure(
-            y, ypred, labels, f"plots/{stem}", epoch, vis_format, vis_print
+            y, ypred, labels, plots_path(stem), epoch, vis_format, vis_print
         )
 
 
@@ -617,7 +693,7 @@ def f1_plot(
     ypred_train: npt.NDArray,
     y_val: npt.NDArray,
     ypred_val: npt.NDArray,
-    mode: str = "",
+    mode: str = "val",
     epoch: int = 0,
     vis_format: str = "png",
     vis_print: bool = False,
@@ -637,7 +713,7 @@ def f1_plot(
     ypred_val: np.array
         Predicted validation labels (unseen data).
     mode: str
-        Added data mode to the name of the saved figures (e.g train, valid, eval).
+        Added data mode to the name of the saved figures (trn, val, eval; no leading underscore).
     epoch: int
         Epoch number.
     """
@@ -674,13 +750,11 @@ def f1_plot(
         zero_division=0,
     ).tolist()
 
-    if mode == "_eval":
-        label = "eval"
-    else:
-        label = "valid"
-
-    f1_train_file = f"plots/f1_train{mode}.csv"
-    f1_valid_file = f"plots/f1_{label}.csv"
+    label = mode
+    f1_train_file = plots_path(
+        f"f1_trn{'' if mode == 'val' else '_' + mode}.csv", per_epoch=False
+    )
+    f1_valid_file = plots_path(f"f1_{mode}.csv", per_epoch=False)
 
     train_df = pd.DataFrame([train_f1_score], columns=classes_list)
     valid_df = pd.DataFrame([valid_f1_score], columns=classes_list)
@@ -723,7 +797,15 @@ def f1_plot(
         ylabel=True,
     )
     _set_title(ax, _epoch_title("F1 Score", epoch), title_font_size)
-    save_figure(fig, f"plots/f1{mode}.{vis_format}", vis_format, vis_print)
+    save_figure(
+        fig,
+        plots_path(
+            f"f1{'' if mode == 'val' else '_' + mode}.{vis_format}",
+            per_epoch=False,
+        ),
+        vis_format,
+        vis_print,
+    )
 
 
 @_styled
@@ -805,15 +887,19 @@ def recon_plot(
             )
             number_of_columns = 1
 
-        # define the dimensions for the napari grid
-        grid_for_napari = np.zeros(
-            (
-                number_of_random_samples * dsize[0],
-                2 * dsize[1] * number_of_columns + padding * number_of_columns,
-                dsize[2],
-            ),
-            dtype=np.float32,
-        )
+        # inputs and reconstructions go to separate .mrc files with the same
+        # layout, so each file gets its own contour level in the viewer
+        grids = {
+            part: np.zeros(
+                (
+                    number_of_random_samples * dsize[0],
+                    (dsize[1] + padding) * number_of_columns,
+                    dsize[2],
+                ),
+                dtype=np.float32,
+            )
+            for part in ("in", "out")
+        }
 
         reconstruction_index: list[dict[str, int | str]] = []
         for k in range(number_of_columns):
@@ -821,22 +907,13 @@ def recon_plot(
             selected_indices = np.random.choice(
                 len(img), size=number_of_random_samples, replace=False
             )
-            selected_img = img[selected_indices]
-            selected_rec = rec[selected_indices]
-
-            # stack the images together with their reconstruction
-            rec_img = np.hstack((selected_img, selected_rec))
-
-            # Create and save the mrc file with single transversals
-            for j in range(2):
-                for i in range(number_of_random_samples):
-                    grid_for_napari[
-                        i * dsize[0] : (i + 1) * dsize[0],
-                        j * dsize[1]
-                        + (dsize[1] * 2 + padding) * k : (j + 1) * dsize[1]
-                        + (dsize[1] * 2 + padding) * k,
-                        :,
-                    ] = rec_img[i, j, :, :, :]
+            col = slice(
+                (dsize[1] + padding) * k, (dsize[1] + padding) * k + dsize[1]
+            )
+            for i, source_index in enumerate(selected_indices):
+                row = slice(i * dsize[0], (i + 1) * dsize[0])
+                grids["in"][row, col, :] = img[source_index, 0]
+                grids["out"][row, col, :] = rec[source_index, 0]
 
             reconstruction_index.extend(
                 {
@@ -848,10 +925,11 @@ def recon_plot(
                 for i, source_index in enumerate(selected_indices)
             )
 
-        save_mrc_file(f"recon_{mode}.mrc", grid_for_napari)
-        pd.DataFrame(reconstruction_index).to_csv(
-            f"plots/recon_{mode}.csv", index=False
-        )
+        save_mrc_file(f"recon_{mode}_in.mrc", grids["in"])
+        save_mrc_file(f"recon_{mode}_out.mrc", grids["out"])
+        recon_csv = plots_path(f"recon_{mode}.csv")
+        pd.DataFrame(reconstruction_index).to_csv(recon_csv, index=False)
+        copy_saved(recon_csv)
 
 
 @_styled
@@ -880,7 +958,7 @@ def latent_embed_plot_tsne(
     classes: list
         List of classes.
     mode: str
-        Added data mode to the name of the saved figure (e.g train, valid, eval).
+        Added data mode to the name of the saved figure (trn, val, eval; no leading underscore).
     epoch: int
         Current epoch
     perplexity: int
@@ -1016,7 +1094,7 @@ def latent_embed_plot_tsne(
     _set_title(ax, _epoch_title("t-SNE Embedding", epoch), title_font_size)
     save_figure(
         fig,
-        f"plots/embedding_TSNE{mode}.{vis_format}",
+        plots_path(f"embedding_TSNE{'_' + mode if mode else ''}.{vis_format}"),
         vis_format,
         vis_print,
         display,
@@ -1038,7 +1116,7 @@ def dyn_latentembed_plot(
     epoch: int
         Current epoch.
     mode: str
-        Added data mode to the name of the saved figure (e.g train, valid, eval).
+        Added data mode to the name of the saved figure (trn, val, eval; no leading underscore).
     embedding: np.ndarray | None
         Precomputed embedding coordinates. If omitted, they are calculated
         from the latent columns in ``df``.
@@ -1199,7 +1277,9 @@ def dyn_latentembed_plot(
     if not os.path.exists("latents"):
         os.mkdir("latents")
     # save latentspace and ids
-    chart.save(f"latents/latent_epoch_{epoch + 1}_{mode}.html")
+    chart.save(
+        f"latents/latent_epoch_{epoch + 1}{'_' + mode if mode else ''}.html"
+    )
 
 
 @_styled
@@ -1242,7 +1322,7 @@ def confidence_plot(x, y, s, suffix=None, vis_format="png", vis_print=False):
                 label="lat" + str(i + 1),
             )
         ax[c].tick_params(labelsize=font_size)
-    name = f"plots/confidence.{vis_format}"
+    name = plots_path(f"confidence.{vis_format}")
     if suffix is not None:
         name = name[:-4] + "_" + suffix + name[-4:]
     handles, labels = ax[-1].get_legend_handles_labels()
@@ -1331,135 +1411,14 @@ def latent_space_similarity_plot(
         unique_classes,
         np.array([str(c) not in classes_in_data for c in unique_classes]),
         _epoch_title("Average Cosine Similarity Matrix", epoch),
-        f"plots/similarity_mean{mode}.{vis_format}",
+        plots_path(
+            f"similarity_mean{'_' + mode if mode else ''}.{vis_format}"
+        ),
         vis_format,
         vis_print,
         fig_size,
         display,
     )
-
-
-def latent_4enc_interpolate_plot(
-    dsize: tuple,
-    xs: torch.Tensor,
-    ys: torch.Tensor,
-    vae: torch.nn.Module,
-    device: torch.device,
-    plots_config: npt.NDArray,
-    poses: list,
-    display: bool = False,
-    vis_format: str = "png",
-    vis_print: bool = False,
-) -> None:
-    """Visualise the interpolation of latent space between 4 randomly selected encodings.
-    The number of plots and the number of interpolation steps is modifyable.
-
-    Parameters
-    ----------
-    dsize: torch.size
-        the size of input.
-    x: torch.Tensor
-        A sample batch. we extract 4 random images from this
-    xs: list
-        the list of all latent vectors
-    ys: list
-        the list of all labels for each latent vector in xs
-    vae: torch.nn.Module
-        Affinity vae model.
-    device: torch.device
-        Device to run the model on.
-    data_dim: int
-        the size of spatial dimensions of the input data (2:2D, 3:3D)
-    plots_config: np.array
-        Array containing the number of plots to be generated and the number of interpolation steps.
-    poses: list
-        List of pose vectors.
-    display: bool
-        When this variable is set to true, the save_imshow_png function only dispalys the plot
-        and does not save a png image. This is to allow the use of this function in jupyter notebook
-        post calculation. This features is not yet implemented for save_mrc_file.
-    vis_format: str
-        format of the image saved
-    """
-    logging.info(
-        "################################################################",
-    )
-    logging.info(
-        "Visualising Latent Interpolation between 4 randomly selected encodings ...\n"
-    )
-
-    padding = 0
-    classes = np.unique(np.asarray(ys))
-    if len(classes) <= 3:
-        logging.warning(
-            "\n\nWARNING: Interpolation plot needs at least 4 distinct classes, "
-            "cannot visualise interpolations. Exiting.\n",
-        )
-        return
-    latent_dim = xs.shape[1]
-
-    # Number of plots (each have 4 random corners)
-    plots_config = plots_config.replace(" ", "").split(",")
-
-    # Number of interpolation steps
-    num_steps = int(plots_config[1])
-
-    if poses is not None:
-        pose_mean = np.mean(poses)
-
-    for num_fig in range(int(plots_config[0])):
-        enc = []
-
-        draw_four = random.sample(range(len(classes)), k=4)
-        for idx in draw_four:
-            lat = np.take(
-                xs,
-                random.sample(list(np.where(ys == classes[idx])[0]), k=1),
-                axis=0,
-            )
-            enc.append(lat)
-
-        enc_t = torch.as_tensor(
-            np.asarray(enc, dtype=np.float32).reshape(4, latent_dim)
-        )
-        h = torch.linspace(0, 1, num_steps)[:, None, None]
-        v = torch.linspace(0, 1, num_steps)[None, :, None]
-
-        # bilinear interpolation in the latent space, all cells at once
-        z_batch = (
-            (1 - h) * (1 - v) * enc_t[0]
-            + h * (1 - v) * enc_t[1]
-            + (1 - h) * v * enc_t[2]
-            + h * v * enc_t[3]
-        ).reshape(-1, latent_dim)
-        z_batch = z_batch.to(device=device, dtype=torch.float32)
-
-        pose_batch = None
-        if poses is not None:
-            pose_batch = (
-                torch.zeros(num_steps * num_steps, poses[0].shape[0])
-                + pose_mean
-            ).to(device=device, dtype=torch.float32)
-
-        # Decode all interpolated encodings in a single call
-        with torch.no_grad():
-            decoded_images = vae.decoder(z_batch, pose_batch)
-
-        decoded_grid = np.reshape(
-            decoded_images.cpu().numpy(), (num_steps, num_steps, *dsize)
-        )
-
-        _save_grid_figure(
-            num_steps,
-            num_steps,
-            dsize,
-            decoded_grid,
-            f"latent_interpolate_{num_fig}",
-            vis_format,
-            padding,
-            display=display,
-            vis_print=vis_print,
-        )
 
 
 def latent_disentamglement_plot(
@@ -1468,11 +1427,16 @@ def latent_disentamglement_plot(
     vae: torch.nn.Module,
     device: torch.device,
     poses: list | None = None,
+    label: str = "avg",
     mode: str = "trn",
     vis_format: str = "png",
     vis_print: bool = False,
+    number_of_samples: int = 15,
 ) -> None:
     """Visualise latent content disentanglement.
+
+    Each latent dimension is traversed from -2 to +2 standard deviations
+    around the mean of the given latents.
 
     Parameters
     ----------
@@ -1484,18 +1448,24 @@ def latent_disentamglement_plot(
         Affinity vae model.
     device: torch.device
         Device to run the model on.
-    data_dim: int
-        the size of spatial dimensions of the input data (2:2D, 3:3D)
     poses: list
         List of pose vectors.
+    label: str
+        Name used in the file name, "avg" for all data or the class name.
     mode: str
         Mode of evaluation (trn: Training, vld: Validation, eval: Evaluation )
+    number_of_samples: int
+        number of traversal steps per dimension
     """
     logging.info(
         "################################################################"
     )
-    logging.info("Visualising latent content disentanglement ...\n")
-    number_of_samples = 7
+    if label == "avg":
+        logging.info("Visualising latent content disentanglement ...\n")
+    else:
+        logging.info(
+            f"Visualising latent content disentanglement for class {label} ...\n"
+        )
     padding = 0
     latents = np.asarray(lats)
     if poses is not None:
@@ -1507,16 +1477,13 @@ def latent_disentamglement_plot(
 
     if poses is not None:
         pos_means = np.mean(poses_space, axis=0)
-        pos_dims = poses_space.shape[-1]
 
-    # Single traversals along each latent dim, every 0.4 sigma from -1.2 to 1.2
-    steps = -1.2 + 0.4 * np.arange(number_of_samples)
-    z_np = np.tile(lat_means, (latent_dims, number_of_samples, 1))
-    idx = np.arange(latent_dims)
-    z_np[idx, :, idx] += lat_stds[:, None] * steps[None, :]
-    z_batch = torch.from_numpy(
-        z_np.reshape(-1, latent_dims).astype(np.float32)
-    ).to(device)
+    # one row per latent dim, from mean - 2 std to mean + 2 std along that dim
+    offsets = 2.0 * np.diag(lat_stds)
+    z_np = interpolate(
+        lat_means - offsets, lat_means + offsets, number_of_samples
+    )
+    z_batch = torch.from_numpy(z_np.reshape(-1, latent_dims)).to(device)
 
     pose_batch = None
     if poses is not None:
@@ -1526,8 +1493,7 @@ def latent_disentamglement_plot(
             )
         ).to(device)
 
-    with torch.no_grad():
-        recon = vae.decoder(z_batch, pose_batch)
+    recon = _decode_in_chunks(vae, z_batch, pose_batch)
 
     recon_images = np.reshape(
         recon.cpu().numpy(), (latent_dims, number_of_samples, *dsize)
@@ -1538,30 +1504,71 @@ def latent_disentamglement_plot(
         number_of_samples,
         dsize,
         recon_images,
-        f"disentanglement-latent_{mode}",
+        f"disentanglement-latent_{label}_{mode}",
         vis_format,
         padding,
         vis_print=vis_print,
     )
 
 
+def latent_class_disentanglement_plot(
+    dsize: tuple,
+    lats: list,
+    y: list,
+    vis_class: str,
+    vae: torch.nn.Module,
+    device: torch.device,
+    poses: list | None = None,
+    mode: str = "trn",
+    vis_format: str = "png",
+    vis_print: bool = False,
+    number_of_samples: int = 15,
+) -> None:
+    """Latent disentanglement for each class listed in `vis_class`
+    (comma separated): the data is filtered to the class and
+    `latent_disentamglement_plot` is called with `label=class`."""
+    labels = np.asarray(y).astype(str)
+    for cls in requested_classes(y, vis_class, "vis_class"):
+        idx = labels == cls
+        class_lats = np.asarray(lats)[idx]
+        class_poses = None if poses is None else np.asarray(poses)[idx]
+        if len(class_lats) == 1 or not np.any(class_lats.std(axis=0) > 0):
+            logging.warning(
+                f"Class {cls} has a single sample or no latent spread, "
+                "its latent traversal will be constant."
+            )
+        latent_disentamglement_plot(
+            dsize,
+            class_lats,
+            vae,
+            device,
+            poses=class_poses,
+            label=cls,
+            mode=mode,
+            vis_format=vis_format,
+            vis_print=vis_print,
+            number_of_samples=number_of_samples,
+        )
+
+
 def pose_class_disentanglement_plot(
     dsize: tuple,
     x: list,
     y: list,
-    pose_vis_class: npt.NDArray,
+    vis_class: str,
     poses: list,
     vae: torch.nn.Module,
     device: torch.device,
     mode: str = "trn",
-    number_of_samples: int = 7,
-    specific_enc: npt.NDArray = None,
+    number_of_samples: int = 15,
     display: bool = False,
     vis_format: str = "png",
     vis_print: bool = False,
 ):
-    """Visualise Pose interpolation per class. This function creates a pose interpolatoion
-    plot for all classes listed in pose_vis_class.
+    """Visualise pose disentanglement per class. For each class in
+    `vis_class` the data is filtered to the class and
+    `pose_disentanglement_plot` is called with `label=class`, so the traversal
+    starts from the class mean latent and uses the class pose mean and std.
 
     Parameters
     ----------
@@ -1571,20 +1578,18 @@ def pose_class_disentanglement_plot(
         List of latent vectors.
     y: List
         List of the labels associated with each latent vector in x
-    pose_vis_class: list
-        Classes to be used for pose interpolation (a seperate pose interpolation figure would be created for each class)."
+    vis_class: str
+        Comma separated classes, a separate figure is created for each class.
     poses: list
         List of pose vectors.
     vae: torch.nn.Module
         Affinity vae model.
-    data_dim: int
-        the size of spatial dimensions of the input data (2:2D, 3:3D)
     device: torch.device
         Device to run the model on.
     mode: str
         Mode of evaluation (trn: Training, vld: Validation, eval: Evaluation )
-    number_of_samples: int = 7
-        number of pose interpolation steps, prefarably odd
+    number_of_samples: int
+        number of pose traversal steps
     display: bool
         When this variable is set to true, the save_imshow_png function only dispalys the plot
         and does not save a png image. This is to allow the use of this function in jupyter notebook
@@ -1592,57 +1597,34 @@ def pose_class_disentanglement_plot(
     vis_format: str
         format of the image saved
     """
-    logging.info(
-        "Visualising pose disentanglement for each class {}...\n".format(
-            "".join(pose_vis_class)
-        )
-    )
     if poses is None:
         logging.warning(
             "Pose interpolation cannot be done if pose dimension is not specified"
         )
         return
 
-    padding = 0
-    x = np.asarray(x)
-
-    poses_space = np.asarray(poses)
-    pos_dims = poses_space.shape[-1]
-    pose_vis_class_list = pose_vis_class.replace(" ", "").split(",")
-
-    for i in pose_vis_class_list:
-        class_x = np.take(x, np.where(np.array(y) == i)[0], axis=0)
-        class_x_indx = np.random.choice(class_x.shape[0])
-        enc = class_x[class_x_indx, :]
-
-        if specific_enc is not None:
-            enc = specific_enc
-
-        class_pos = np.take(poses_space, np.where(np.array(y) == i)[0], axis=0)
-        class_pos_mean = np.mean(class_pos, axis=0)
-        class_pos_stds = np.std(class_pos, axis=0)
-
-        decoded_grid = pose_interpolation(
-            enc,
-            pos_dims,
-            class_pos_mean,
-            class_pos_stds,
+    labels = np.asarray(y).astype(str)
+    for cls in requested_classes(y, vis_class, "vis_class"):
+        idx = labels == cls
+        class_x = np.asarray(x)[idx]
+        class_pos = np.asarray(poses)[idx]
+        if len(class_pos) == 1 or not np.any(class_pos.std(axis=0) > 0):
+            logging.warning(
+                f"Class {cls} has a single sample or no pose spread, "
+                "its pose traversal will be constant."
+            )
+        pose_disentanglement_plot(
             dsize,
-            number_of_samples,
+            class_x,
+            class_pos,
             vae,
             device,
-        )
-
-        _save_grid_figure(
-            pos_dims,
-            number_of_samples,
-            dsize,
-            decoded_grid,
-            f"pose_interpolate_{mode}_{i}",
-            vis_format,
-            padding,
+            label=cls,
+            mode=mode,
             display=display,
+            vis_format=vis_format,
             vis_print=vis_print,
+            number_of_samples=number_of_samples,
         )
 
 
@@ -1657,8 +1639,12 @@ def pose_disentanglement_plot(
     display: bool = False,
     vis_format: str = "png",
     vis_print: bool = False,
+    number_of_samples: int = 15,
 ):
     """Visualise pose disentanglement.
+
+    Each pose dimension is traversed from -2 to +2 standard deviations
+    around the pose mean, with the mean latent.
 
     Parameters
     ----------
@@ -1670,16 +1656,18 @@ def pose_disentanglement_plot(
         List of pose vectors.
     vae: torch.nn.Module
         Affinity vae model.
-    data_dim: int
-        the size of spatial dimensions of the input data (2:2D, 3:3D)
     device: torch.device
         Device to run the model on.
+    label: str
+        Name used in the file name, "avg" for all data or the class name.
     display: bool
         When this variable is set to true, the save_imshow_png function only dispalys the plot
         and does not save a png image. This is to allow the use of this function in jupyter notebook
         post calculation. This features is not yet implemented for save_mrc_file.
     vis_format: str
         format of the image saved
+    number_of_samples: int
+        number of traversal steps per pose dimension
     """
     logging.info(
         "################################################################",
@@ -1691,7 +1679,6 @@ def pose_disentanglement_plot(
             "Visualising pose disentanglement for class {}...\n".format(label)
         )
 
-    number_of_samples = 7
     padding = 0
     latents = np.asarray(lats)
     poses_space = np.asarray(poses)
@@ -1702,15 +1689,22 @@ def pose_disentanglement_plot(
 
     lat_means = np.mean(latents, axis=0)
 
-    recon = pose_interpolation(
-        lat_means,
-        pos_dims,
-        pos_means,
-        pos_stds,
-        dsize,
-        number_of_samples,
-        vae,
-        device,
+    # one row per pose dim, from mean - 2 std to mean + 2 std along that dim
+    offsets = 2.0 * np.diag(pos_stds)
+    p_np = interpolate(
+        pos_means - offsets, pos_means + offsets, number_of_samples
+    )
+    pose_batch = torch.from_numpy(p_np.reshape(-1, pos_dims)).to(device)
+    z_batch = torch.from_numpy(
+        np.tile(lat_means, (pos_dims * number_of_samples, 1)).astype(
+            np.float32
+        )
+    ).to(device)
+
+    decoded = _decode_in_chunks(vae, z_batch, pose_batch)
+
+    recon = np.reshape(
+        decoded.cpu().numpy(), (pos_dims, number_of_samples, *dsize)
     )
 
     _save_grid_figure(
@@ -1718,7 +1712,7 @@ def pose_disentanglement_plot(
         number_of_samples,
         dsize,
         recon,
-        f"disentanglement-pose_{mode}_{label}",
+        f"disentanglement-pose_{label}_{mode}",
         vis_format,
         padding,
         display=display,
@@ -1737,7 +1731,13 @@ def interpolations_plot(
     vis_format: str = "png",
     vis_print: bool = False,
 ) -> None:
-    """Visualise interpolations.
+    """Visualise a 10x10 bilinear latent interpolation between 4 real encodings.
+
+    The corners are one random real encoding from each of 4 random distinct
+    classes. With only 2 or 3 classes, a single row of 10 steps is drawn
+    between one random real encoding from each of 2 random distinct classes.
+    The real pose of the first corner is used in every cell, so only the
+    latent changes across the grid (None if there are no poses).
 
     Parameters
     ----------
@@ -1760,83 +1760,55 @@ def interpolations_plot(
         "################################################################",
     )
     logging.info("Visualising interpolations ...\n")
-    lats = np.asarray(lats)
-    classes = np.asarray(classes)
+    lats_arr = np.asarray(lats)
+    classes_arr = np.asarray(classes)
 
-    if poses is not None:
-        poses_space = np.asarray(poses)
-
-    class_ids = np.unique(classes)
-    if len(class_ids) <= 3:
+    class_ids = np.unique(classes_arr)
+    if len(class_ids) < 2:
         logging.warning(
-            "\n\nWARNING: Interpolation plot needs at least 4 distinct classes, "
+            "\n\nWARNING: Interpolation plot needs at least 2 distinct classes, "
             "cannot visualise interpolations. Exiting.\n",
         )
         return
+    n_corners = 4 if len(class_ids) >= 4 else 2
 
-    class_reps_lats = np.take(
-        lats, [np.where(classes == i)[0][0] for i in class_ids], axis=0
-    )
-    class_reps_lats = np.asarray(class_reps_lats)
-    if poses is not None:
-        class_reps_poses = np.asarray(
-            np.take(
-                poses_space,
-                [np.where(classes == i)[0][0] for i in class_ids],
-                axis=0,
-            )
-        )
-
-    draw_four = random.sample(list(enumerate(class_reps_lats)), k=4)
-    inds, class_rep = list(zip(*draw_four))
-    class_rep_lats = np.asarray(class_rep)
-    latent_dim = class_rep_lats.shape[1]
-
-    if poses is not None:
-        class_rep_poses = np.asarray([class_reps_poses[i] for i in inds])
-        poses_dim = class_rep_poses.shape[1]
-
-    # Generate a gird of latent vectors interpolated between reps of four ids
-
-    grid_size = 6
-    alpha_values = np.linspace(0.0, 1.0, grid_size, dtype=np.float32)
-    beta_values = np.linspace(0.0, 1.0, grid_size, dtype=np.float32)
-    h = alpha_values[:, None, None]
-    v = beta_values[None, :, None]
-    w = (
-        (1 - h) * (1 - v),
-        h * (1 - v),
-        (1 - h) * v,
-        h * v,
+    latent_dim = lats_arr.shape[1]
+    corner_idx = [
+        random.choice(list(np.where(classes_arr == cls)[0]))
+        for cls in random.sample(list(class_ids), k=n_corners)
+    ]
+    corners = np.asarray(lats_arr[corner_idx], dtype=np.float32).reshape(
+        n_corners, latent_dim
     )
 
-    # bilinear interpolation in the latent space, all grid cells at once
-    reps_z = np.asarray(class_rep_lats, dtype=np.float32)
-    z_batch = sum(w[k] * reps_z[k] for k in range(4)).reshape(-1, latent_dim)
-    z_batch = torch.from_numpy(np.asarray(z_batch, dtype=np.float32)).to(
-        device=device
-    )
+    n = 10  # grid side (and steps of the 2-class row)
+    if n_corners == 4:
+        rows = n
+        # first column goes from corner 0 to 1, last column from 2 to 3,
+        # and each row interpolates between them
+        left = interpolate(corners[0], corners[1], n)
+        right = interpolate(corners[2], corners[3], n)
+        z_np = interpolate(left, right, n)
+    else:
+        rows = 1
+        z_np = interpolate(corners[0], corners[1], n)
+    z_batch = torch.from_numpy(z_np.reshape(-1, latent_dim)).to(device)
 
     pose_batch = None
     if poses is not None:
-        reps_p = np.asarray(class_rep_poses, dtype=np.float32)
-        p_batch = sum(w[k] * reps_p[k] for k in range(4)).reshape(
-            -1, poses_dim
+        poses_arr = np.asarray(poses, dtype=np.float32)
+        corner_pose = torch.as_tensor(poses_arr[corner_idx[0]])
+        pose_batch = corner_pose.repeat(rows * n, 1).to(
+            device=device, dtype=torch.float32
         )
-        pose_batch = torch.from_numpy(
-            np.asarray(p_batch, dtype=np.float32)
-        ).to(device=device)
 
-    with torch.no_grad():
-        decoded_images = vae.decoder(z_batch, pose_batch)
+    decoded_images = _decode_in_chunks(vae, z_batch, pose_batch)
 
-    decoded_grid = np.reshape(
-        decoded_images.cpu().numpy(), (grid_size, grid_size, *dsize)
-    )
+    decoded_grid = np.reshape(decoded_images.cpu().numpy(), (rows, n, *dsize))
 
     _save_grid_figure(
-        grid_size,
-        grid_size,
+        rows,
+        n,
         dsize,
         decoded_grid,
         f"interpolations_{mode}",
@@ -1880,7 +1852,7 @@ def plot_affinity_matrix(
         all_classes,
         np.array([c not in selected_classes for c in all_classes]),
         "Affinity Matrix",
-        f"plots/affinity_matrix.{vis_format}",
+        plots_path(f"affinity_matrix.{vis_format}", per_epoch=False),
         vis_format,
         vis_print,
         fig_size,
@@ -1932,7 +1904,9 @@ def plot_classes_distribution(
     _set_title(ax, "Classes Distribution", title_font_size)
     save_figure(
         fig,
-        f"plots/classes_distribution_{category}.{vis_format}",
+        plots_path(
+            f"classes_distribution_{category}.{vis_format}", per_epoch=False
+        ),
         vis_format,
         vis_print,
     )

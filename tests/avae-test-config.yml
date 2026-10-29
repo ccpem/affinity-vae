@@ -71,10 +71,14 @@ vis_sim:  false  # latent distance matrix
 vis_int:  false  # latent interpolations on/off (frequency controlled)
 vis_dis:  false  # latent disentanglement on/off (frequency controlled)
 vis_pos:  false  # pose disentanglement on/off (frequency controlled)
-vis_pose_class: 1,2 # comma separated string eg. 1,2
+vis_class: a,e # comma separated string eg. 1,2
 vis_all:  true   # sets all above to on/off
 
 
+# Plot frequencies in epochs. 0 = never periodically: with vis_best on, the
+# plot is then only drawn at new best-loss / best-accuracy epochs (from
+# best_start), e.g. freq_all: 0 for best-epoch plots only. The loss plot has no
+# frequency and is redrawn every epoch.
 freq_acc: 10  # frequency of accuracy visualisation
 freq_rec: 10  # frequency of reconstruction visualisation
 freq_emb: 10  # frequency of latent embedding visualisation
@@ -83,7 +87,7 @@ freq_sim: 10  # frequency of similarity matrix visualisation
 freq_int: 10  # frequency of latent interpolation visualisation
 freq_dis: 10  # frequency of latent disentanglement visualisation
 freq_pos: 10  # frequency of pose disentanglement visualisation
-freq_all: 10  # sets all above to the same value (inc freq_sta and freq_eval)
+freq_all: 10  # sets all above to the same value (inc freq_sta and freq_eval, unless 0)
 
 #### debug parameters
 debug: false

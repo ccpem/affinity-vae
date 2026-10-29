@@ -88,7 +88,7 @@ The config file provided here has optimal parameters for the MNIST dataset, so
 we recommend to use it as it is.
 
 Once the training finishes you can evaluate the model on unseen data using the
-test set by stepping into the new directory and running the following. The outputs from the test run will be saved in the existing plots directory created during the training run, and will have the suffix ```evl_``` in the filename.
+test set by stepping into the new directory and running the following. The outputs from the test run will be saved in the existing plots directory created during the training run, and will have the suffix ```_eval``` in the filename.
 
 ```bash
 cd path/to/new_out

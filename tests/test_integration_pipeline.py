@@ -18,7 +18,7 @@ class TrainEvalIntegrationTest(unittest.TestCase):
         data_params = pipeline_params(test_data)
         data_params["vis_all"] = True
         data = config.load_config_params(local_args=data_params)
-        data.vis_pose_class = "1b23,1dkg"
+        data.vis_class = "1b23,1dkg"
 
         (
             n_dir_train,
@@ -31,10 +31,11 @@ class TrainEvalIntegrationTest(unittest.TestCase):
         ) = helper_train_eval(data)
 
         self.assertEqual(n_dir_train, 3)
-        self.assertEqual(n_plots_train, 33)
+        self.assertEqual(n_plots_train, 44)
         self.assertEqual(n_latent_train, 1)
         self.assertEqual(n_states_train, 2)
-        self.assertEqual(n_plots_eval, 53)
+        # includes interpolations_eval (+ PNGs of 3D grids), now produced with real test labels
+        self.assertEqual(n_plots_eval, 75)
         self.assertEqual(n_latent_eval, 2)
         self.assertEqual(n_states_eval, 3)
 

@@ -34,7 +34,6 @@ dependencies = [
     "requests",
     "scikit-image",
     "scikit-learn",
-    "umap-learn",
     "caked@git+https://github.com/alan-turing-institute/caked/" #to be changed when caked is in pypi.
 ]
 
@@ -75,6 +74,7 @@ baskerville = [
 ]
 napari = [
     "napari[all]",
+    "umap-learn",
     "torch",
     "torchvision",
     "pydantic<2", # latest napari version is incompatible with napari, napari demo doesnt use pydantic.

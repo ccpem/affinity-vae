@@ -3,9 +3,10 @@ from unittest import mock
 import numpy as np
 import pytest
 import sklearn.metrics.pairwise
+import torch
 
 from avae.base import dims_after_pooling
-from avae.utils_learning import combine_accuracy_data
+from avae.utils_learning import combine_accuracy_data, mean_over_ranks
 from avae.utils_vis import latent_space_similarity_mat
 
 
@@ -102,3 +103,17 @@ def test_latent_space_similarity_mat_matches_pairwise(plot_mode):
         latent_space, class_labels, unique_classes, 4, plot_mode=plot_mode
     )
     np.testing.assert_allclose(result, expected, atol=1e-7)
+
+
+def test_mean_over_ranks():
+    """Two ranks with 2 and 1 batches give the batch-weighted mean."""
+
+    class _TwoRanks:
+        device = "cpu"
+
+        def all_reduce(self, t, reduce_op):
+            # second rank: loss sums [3, 6] over 1 batch
+            return t + torch.tensor([3.0, 6.0, 1.0], dtype=t.dtype)
+
+    out = mean_over_ranks(np.array([2.0, 4.0]), 2, _TwoRanks())
+    np.testing.assert_allclose(out, [5.0 / 3, 10.0 / 3])

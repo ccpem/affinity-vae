@@ -26,6 +26,7 @@ def model_setup(
     gsd_conv_layers: int,
     device: torch.device,
     filters: list | None = None,
+    verbose: bool = True,
 ):
     """Create the AffinityVAE model.
 
@@ -56,11 +57,14 @@ def model_setup(
         The device to use for training and inference.
     filters : list or None
         The filters to use in the model.
+    verbose : bool
+        Log the model setup (False on all but the first GPU process).
 
     """
-    logging.info("\n")
-    logging.info("############################################### MODEL")
-    logging.info(f"Setting up the model...")
+    if verbose:
+        logging.info("\n")
+        logging.info("############################################### MODEL")
+        logging.info(f"Setting up the model...")
 
     if filters is not None:
         filters = np.asarray(filters, dtype=np.int64)
@@ -135,7 +139,8 @@ def model_setup(
 
     vae = AffinityVAE(encoder, decoder)
 
-    logging.info(vae)
+    if verbose:
+        logging.info(vae)
 
     return vae
 

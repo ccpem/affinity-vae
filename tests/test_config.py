@@ -1,3 +1,4 @@
+import logging
 import os
 import pathlib
 import tempfile
@@ -65,6 +66,7 @@ class ConfigTest(unittest.TestCase):
     def test_config_defaults(self):
         self.assertTrue(AffinityConfig.model_config["validate_default"])
         self.assertEqual(self.default_model.model, "cnn")
+        self.assertEqual(self.default_model.best_start, 10)
 
     def test_legacy_models_only_allow_existing_checkpoints(self):
         for model in ("u", "a", "b"):
@@ -102,6 +104,65 @@ class ConfigTest(unittest.TestCase):
         saved_model = load_config_params(config_file=output_path)
         self.assertEqual(saved_model, self.default_model)
 
+    def test_vis_all_false_does_not_disable_best_plots(self):
+        data = load_config_params(
+            config_file=self.config, local_args={"vis_all": False}
+        )
+        self.assertFalse(data.vis_epochs)
+        self.assertTrue(data.vis_best)
+
+    PER_EPOCH = ("acc", "rec", "emb", "dynamic", "sim", "int", "dis", "pos")
+
+    def _best_args(self, plots_on=True, **extra):
+        args = {"vis_all": False, "vis_best": True}
+        for n in self.PER_EPOCH:
+            args[f"vis_{n}"] = False
+        if plots_on:
+            args["vis_rec"] = True
+            args["freq_rec"] = 10
+        args.update(extra)
+        return args
+
+    def _load_logs(self, local_args):
+        with self.assertLogs(level="WARNING") as cm:
+            logging.warning("sentinel")
+            load_config_params(config_file=self.config, local_args=local_args)
+        return cm.output
+
+    def test_vis_best_no_plots_warning(self):
+        out = self._load_logs(
+            self._best_args(plots_on=False, epochs=5, best_start=1)
+        )
+        self.assertTrue(
+            any("no per-epoch plots are enabled" in m for m in out)
+        )
+        self.assertFalse(any("after the last epoch" in m for m in out))
+
+    def test_vis_best_start_after_last_epoch_warning(self):
+        out = self._load_logs(self._best_args(epochs=3, best_start=10))
+        self.assertTrue(
+            any(
+                "vis_best starts at epoch 10, after the last epoch (3)" in m
+                for m in out
+            )
+        )
+        self.assertFalse(
+            any("no per-epoch plots are enabled" in m for m in out)
+        )
+
+    def test_vis_best_false_no_best_warnings(self):
+        out = self._load_logs(
+            self._best_args(
+                plots_on=False, vis_best=False, epochs=3, best_start=10
+            )
+        )
+        self.assertFalse(any("vis_best" in m for m in out))
+
+    def test_vis_best_valid_no_best_warnings(self):
+        for start in (1, 3):
+            out = self._load_logs(self._best_args(epochs=3, best_start=start))
+            self.assertFalse(any("vis_best" in m for m in out))
+
     def test_validate_config(self):
 
         data = load_config_params(
@@ -117,6 +178,9 @@ class ConfigTest(unittest.TestCase):
         )
         self.assertEqual(data.split, self.data_local['split'])
         self.assertEqual(data.new_out, self.default_model.new_out)
+        self.assertFalse(data.vis_epochs)
+        self.assertTrue(data.vis_best)
+        self.assertIsNone(data.out)
 
         data_config_only = load_config_params(config_file=self.config)
         self.assertEqual(data_config_only.epochs, 1000)
@@ -133,6 +197,27 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(
             data_local_data_only.vis_all, self.default_model.vis_all
         )
+
+    def test_zero_plot_frequency(self):
+        # freq_all 0: plots only at best epochs; checkpoints and test
+        # encoding keep their own frequency
+        data = load_config_params(
+            local_args={**self.data_local, "freq_all": 0, "freq_sta": 7}
+        )
+        self.assertEqual(data.freq_acc, 0)
+        self.assertEqual(data.freq_pos, 0)
+        self.assertEqual(data.freq_sta, 7)
+        self.assertEqual(data.freq_eval, 10)
+        # without vis_best a plot with frequency 0 is never drawn: warn
+        with self.assertLogs(level="WARNING") as logs:
+            load_config_params(
+                local_args={
+                    **self.data_local,
+                    "freq_sim": 0,
+                    "vis_best": False,
+                }
+            )
+        self.assertTrue(any("freq_sim is 0" in m for m in logs.output))
 
     def test_validate_config_fail(self):
 

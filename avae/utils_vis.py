@@ -1,5 +1,7 @@
+import glob
 import os.path
 import pathlib
+import shutil
 
 import matplotlib.pyplot as plt
 import mrcfile
@@ -9,6 +11,71 @@ import torch
 
 SCREEN_HEIGHT_PX = 720  # top half of a 1440p screen
 VECTOR_FORMATS = ("pdf", "svg", "eps")
+PLOTS_ROOT = "plots"
+_plots_dir = PLOTS_ROOT
+_copy_to: tuple[str, ...] = ()
+_run_id = ""  # run timestamp appended to epoch/best folders, set by set_run_id
+
+
+def set_run_id(run_id: str) -> None:
+    """Tag this run's epoch and best folders (e.g. with params.date_time_run)."""
+    global _run_id
+    _run_id = run_id
+
+
+def vis_dir(epoch: int | None = None, best: str | None = None) -> str:
+    """Folder for per-epoch plots: plots/, plots/epochs_<run id>/epoch_XXXX,
+    or for best="loss"/"acc" plots/best_<kind>_epochXXXX_<run id>."""
+    if epoch is None:
+        return PLOTS_ROOT
+    suffix = f"_{_run_id}" if _run_id else ""
+    if best:
+        return os.path.join(
+            PLOTS_ROOT, f"best_{best}_epoch{epoch:04d}{suffix}"
+        )
+    return os.path.join(PLOTS_ROOT, f"epochs{suffix}", f"epoch_{epoch:04d}")
+
+
+def set_vis_dir(
+    epoch: int | None = None,
+    best: str | None = None,
+    copy_to: tuple[str, ...] = (),
+) -> None:
+    """Direct per-epoch plots to vis_dir(epoch, best) (None resets to plots/).
+
+    Each per-epoch file saved there is also copied to the `copy_to` folders.
+    """
+    global _plots_dir, _copy_to
+    _plots_dir = vis_dir(epoch, best)
+    _copy_to = tuple(copy_to)
+
+
+def copy_saved(path: str | pathlib.Path) -> None:
+    """Copy a just-saved per-epoch file to the folders set by set_vis_dir."""
+    if os.path.dirname(os.fspath(path)) != _plots_dir:
+        return
+    for target in _copy_to:
+        os.makedirs(target, exist_ok=True)
+        shutil.copy2(path, target)
+
+
+def clear_best_dirs(kind: str) -> None:
+    """Remove this run's earlier best folder of `kind` ("loss" or "acc") so
+    only its latest is kept. Other runs' and legacy folders are left alone."""
+    suffix = f"_{_run_id}" if _run_id else ""
+    pattern = os.path.join(
+        PLOTS_ROOT,
+        f"best_{kind}_epoch[0-9][0-9][0-9][0-9]{glob.escape(suffix)}",
+    )
+    for path in glob.glob(pattern):
+        shutil.rmtree(path, ignore_errors=True)
+
+
+def plots_path(fname: str, per_epoch: bool = True) -> str:
+    """Return the save path for a plot, creating its folder on demand."""
+    base = _plots_dir if per_epoch else PLOTS_ROOT
+    os.makedirs(base, exist_ok=True)
+    return os.path.join(base, fname)
 
 
 def create_grid_for_plotting(
@@ -101,6 +168,7 @@ def save_figure(
         kwargs["pil_kwargs"] = {"compress_level": 3}
     fig.savefig(path, **kwargs)
     plt.close(fig)
+    copy_saved(path)
 
 
 def save_imshow_png(
@@ -123,7 +191,7 @@ def save_imshow_png(
     fig.subplots_adjust(left=0, right=1, bottom=0, top=1)
     save_figure(
         fig,
-        "plots/" + fname,
+        plots_path(fname),
         fname.rsplit(".", 1)[-1],
         vis_print,
         display,
@@ -132,10 +200,20 @@ def save_imshow_png(
 
 
 def save_mrc_file(fname: str, array: npt.NDArray) -> None:
-    if not os.path.exists("plots"):
-        os.mkdir("plots")
-    with mrcfile.new("plots/" + fname, overwrite=True) as mrc:
+    path = plots_path(fname)
+    with mrcfile.new(path, overwrite=True) as mrc:
         mrc.set_data(array)
+    copy_saved(path)
+
+
+def plot_labels(labels, suffix: str) -> npt.NDArray:
+    """Labels for plots of test/eval data: `{class}_{suffix}`, or just
+    `suffix` for unlabelled samples, i.e. files named `test_*` (label
+    `test`). Plots only; accuracy and metadata keep the plain class names."""
+    out = []
+    for lab in np.asarray(labels, dtype=object).ravel():
+        out.append(suffix if str(lab) == "test" else f"{lab}_{suffix}")
+    return np.array(out, dtype=object)
 
 
 def colour_per_class(classes: list) -> list:
@@ -164,65 +242,29 @@ def colour_per_class(classes: list) -> list:
     return colours
 
 
-def pose_interpolation(
-    enc: npt.NDArray,
-    pos_dims: int,
-    pose_mean: npt.NDArray,
-    pose_std: npt.NDArray,
-    dsize: tuple,
-    number_of_samples: int,
-    vae: torch.nn.Module,
-    device: torch.device,
+def requested_classes(y: list, spec: str, name: str) -> list:
+    """Classes listed in the comma separated `spec`; raise if any is not in `y`."""
+    wanted = [c for c in spec.replace(" ", "").split(",") if c]
+    available = sorted({str(c) for c in np.asarray(y).astype(str)})
+    missing = [c for c in wanted if c not in available]
+    if missing:
+        raise ValueError(
+            f"{name} contains classes that are not in the data: missing "
+            f"{missing}, available {available}"
+        )
+    return wanted
+
+
+def interpolate(
+    start: npt.NDArray, end: npt.NDArray, steps: int
 ) -> npt.NDArray:
-    """This function:
-    1-  interpolates within each pose channels
-        for the number_of_samples requested.
-    2- returns all decoded images based on the input latent
-        and the interpolated pose
-
-    Parameters
-    ----------
-    enc: numpy array
-        the latent encoding.
-    pos_dims: int
-        the pose channel dimension
-    pose_mean: numpy array
-        mean of each pose channel.
-    pose_std: numpy array
-        standard deviation of each pose channel.
-    dsize: torch.size
-        the dimension of the data. Example [32,32,32]
-    number_of_samples: int
-        number of samples to interpolate for.
-    vae: torch.nn.Module
-        Affinity vae model.
-    device: torch.device
-        Device to run the model on.
-    """
-    # Single transversals along each pose channel, row-major: p_dim, grid_spot
-    steps = -1.2 + 0.4 * np.arange(number_of_samples)
-    pose_mean = np.asarray(pose_mean)
-    means = np.tile(pose_mean, (pos_dims, number_of_samples, 1))
-    means[
-        np.arange(pos_dims)[:, None],
-        np.arange(number_of_samples)[None, :],
-        np.arange(pos_dims)[:, None],
-    ] += (np.asarray(pose_std)[:, None] * steps[None, :]).astype(means.dtype)
-    means = means.reshape(-1, means.shape[-1])
-
-    n = means.shape[0]
-    pos = torch.from_numpy(means).to(device)
-    lat = torch.from_numpy(np.array(enc)).unsqueeze(0).expand(n, -1).to(device)
-
-    # Decode all interpolated vectors in a single batched call
-    with torch.no_grad():
-        decoded_img = vae.decoder(lat, pos)
-
-    decoded_grid = np.reshape(
-        decoded_img.cpu().numpy(), (pos_dims, number_of_samples, *dsize)
-    )
-
-    return decoded_grid
+    """`steps` evenly spaced points on the straight line from `start` to `end`
+    (both included). The vectors are the last axis; leading axes broadcast, so
+    `start` and `end` of shape (..., D) give (..., steps, D)."""
+    t = np.linspace(0.0, 1.0, steps, dtype=np.float32)[:, None]
+    start = np.asarray(start, dtype=np.float32)[..., None, :]
+    end = np.asarray(end, dtype=np.float32)[..., None, :]
+    return (1 - t) * start + t * end
 
 
 def latent_space_similarity_mat(

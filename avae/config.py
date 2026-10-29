@@ -45,6 +45,14 @@ class AffinityConfig(pydantic.BaseModel):
     new_out: bool = pydantic.Field(
         False, description="Create new output directory"
     )
+    out: pathlib.Path | None = pydantic.Field(
+        None,
+        description=(
+            "Directory to write all outputs to (created if missing). Combined "
+            "with --new_out, the results_<...> run directory is created "
+            "inside it. For evaluation, point it at the training run directory."
+        ),
+    )
 
     #### Pre-processing parameters
     shift_min: bool = pydantic.Field(
@@ -182,6 +190,28 @@ class AffinityConfig(pydantic.BaseModel):
         "(vector formats stay sharp at any size and are fastest for "
         "large matrices)",
     )
+    vis_epochs: bool = pydantic.Field(
+        False,
+        description="Also keep each epoch's plots in "
+        "plots/epochs_<run timestamp>/epoch_XXXX/; plots/ still holds the "
+        "latest set",
+    )
+    vis_best: bool = pydantic.Field(
+        True,
+        description="Make every enabled per-epoch plot, regardless of freq_*, "
+        "whenever the validation loss or the validation accuracy reaches a "
+        "new best (from best_start; accuracy is computed every epoch from "
+        "best_start). Plots go to plots/best_loss_epochXXXX_<run timestamp>/ "
+        "(best validation loss) and plots/best_acc_epochXXXX_<run timestamp>/ "
+        "(best validation accuracy); only this run's latest folder of each "
+        "kind is kept and other runs' best folders are left alone. Plots are "
+        "also copied to the normal plot location for that epoch",
+    )
+    best_start: pydantic.PositiveInt = pydantic.Field(
+        10,
+        description="First epoch --vis_best considers; earlier epochs are "
+        "ignored when tracking the best validation loss",
+    )
     vis_print: bool = pydantic.Field(
         False,
         description="Render matrix visualisations (confusion, affinity, "
@@ -214,49 +244,57 @@ class AffinityConfig(pydantic.BaseModel):
     vis_int: bool = pydantic.Field(
         False, description="Visualise latent space interpolation"
     )
-    vis_z_n_int: None | str = pydantic.Field(
-        None,
-        description="Visualise latent space interpolation for specific z and n",  # TODO write better explaination
-    )
     vis_dis: bool = pydantic.Field(
         False,
         description="Visualise latent space disentanglement for each dimension",
     )
+    vis_class: None | str = pydantic.Field(
+        None,
+        description="Comma separated classes for the per class latent "
+        "(with vis_dis) and pose (with vis_pos) disentanglement plots",
+    )
     vis_pos: bool = pydantic.Field(
         False, description="Visualise pose interpolation"
-    )
-    vis_pose_class: None | str = pydantic.Field(
-        None, description="Visualise pose per class interpolation"
     )
     vis_all: bool | None = pydantic.Field(None, description="Visualise all")
 
     ### Frequency parameters
-    freq_acc: pydantic.PositiveInt = pydantic.Field(
-        10, description="Frequency (in epochs) of accuracy plot"
+    freq_acc: pydantic.NonNegativeInt = pydantic.Field(
+        10,
+        description="Frequency (in epochs) of accuracy plot (0: only best epochs with vis_best)",
     )
-    freq_rec: pydantic.PositiveInt = pydantic.Field(
-        10, description="Frequency (in epochs) of reconstruction plot"
+    freq_rec: pydantic.NonNegativeInt = pydantic.Field(
+        10,
+        description="Frequency (in epochs) of reconstruction plot (0: only best epochs with vis_best)",
     )
-    freq_emb: pydantic.PositiveInt = pydantic.Field(
-        10, description="Frequency (in epochs) of latent space plot"
+    freq_emb: pydantic.NonNegativeInt = pydantic.Field(
+        10,
+        description="Frequency (in epochs) of latent space plot (0: only best epochs with vis_best)",
     )
-    freq_dynamic: pydantic.PositiveInt = pydantic.Field(
-        10, description="Frequency (in epochs) of dynamic latent space plot"
+    freq_dynamic: pydantic.NonNegativeInt = pydantic.Field(
+        10,
+        description="Frequency (in epochs) of dynamic latent space plot (0: only best epochs with vis_best)",
     )
-    freq_sim: pydantic.PositiveInt = pydantic.Field(
-        10, description="Frequency (in epochs) of similarity plot"
+    freq_sim: pydantic.NonNegativeInt = pydantic.Field(
+        10,
+        description="Frequency (in epochs) of similarity plot (0: only best epochs with vis_best)",
     )
-    freq_int: pydantic.PositiveInt = pydantic.Field(
-        10, description="Frequency (in epochs) of interpolation plot"
+    freq_int: pydantic.NonNegativeInt = pydantic.Field(
+        10,
+        description="Frequency (in epochs) of interpolation plot (0: only best epochs with vis_best)",
     )
-    freq_dis: pydantic.PositiveInt = pydantic.Field(
-        10, description="Frequency (in epochs) of disentanglement plot"
+    freq_dis: pydantic.NonNegativeInt = pydantic.Field(
+        10,
+        description="Frequency (in epochs) of disentanglement plot (0: only best epochs with vis_best)",
     )
-    freq_pos: pydantic.PositiveInt = pydantic.Field(
-        10, description="Frequency (in epochs) of pose plot"
+    freq_pos: pydantic.NonNegativeInt = pydantic.Field(
+        10,
+        description="Frequency (in epochs) of pose plot (0: only best epochs with vis_best)",
     )
-    freq_all: pydantic.PositiveInt | None = pydantic.Field(
-        None, description="Frequency (in epochs) of all plots"
+    freq_all: pydantic.NonNegativeInt | None = pydantic.Field(
+        None,
+        description="Frequency (in epochs) of all plots, and of freq_sta and "
+        "freq_eval unless 0 (0: plots only at best epochs with vis_best)",
     )
 
     #### Setup
@@ -304,9 +342,13 @@ def load_config_params(
         Dictionary of configuration parameters.
     """
 
-    logging.info("\n")
-    logging.info("############################################### CONFIG")
-    logging.info(f"Loading configuration parameters...")
+    # every GPU process loads the config; only the first one logs, errors
+    # are logged by all (extra GPU processes get LOCAL_RANK > 0)
+    rank_zero = os.environ.get("LOCAL_RANK", "0") == "0"
+    if rank_zero:
+        logging.info("\n")
+        logging.info("############################################### CONFIG")
+        logging.info(f"Loading configuration parameters...")
 
     if local_args is not None and sys_args is None:
         # this scenario only should happen when this function is called in tests
@@ -329,7 +371,10 @@ def load_config_params(
 
     if config_file is not None:
         # initialise config with config file parameter
-        logging.info("Reading submission configuration file %s", config_file)
+        if rank_zero:
+            logging.info(
+                "Reading submission configuration file %s", config_file
+            )
         with open(config_file, "r") as f:
             loaded_params = yaml.safe_load(f)
             params = loaded_params if isinstance(loaded_params, dict) else {}
@@ -351,7 +396,7 @@ def load_config_params(
                 command_line_params.add(name)
                 # overwrite config file value with command line argument value
                 # but only if its on system args (click has defaults)
-                if name in params.keys():
+                if rank_zero and name in params.keys():
                     logging.warning(
                         "Command line argument "
                         + name
@@ -360,7 +405,7 @@ def load_config_params(
                         + " to: "
                         + str(local_args[name])
                     )
-                else:
+                elif rank_zero:
                     logging.info(
                         "Command line argument "
                         + name
@@ -372,16 +417,18 @@ def load_config_params(
     # validate the config
     try:
         params = AffinityConfig(**params).model_dump()
-        logging.info("Config file is valid")
+        if rank_zero:
+            logging.info("Config file is valid")
     except pydantic.ValidationError as e:
-        logging.info("Config file is invalid:")
-        logging.info(e)
+        logging.error("Config file is invalid:")
+        logging.error(e)
         raise RuntimeError("Config file is invalid: " + str(e))
 
-    logging.info("Polishing config parameters...")
+    if rank_zero:
+        logging.info("Polishing config parameters...")
     for key, val in params.items():
         # logging.info("%s: %s", key, str(val))
-        if type(val) == pathlib.Path:
+        if isinstance(val, pathlib.Path):
             # turn relative paths to absolute
             params[key] = str(val.absolute())
         if (
@@ -389,58 +436,88 @@ def load_config_params(
             and params['vis_all'] is not None
             and key not in command_line_params
         ):
-            # set visualisation to vis_all if it is not set, except for vis_z_n_int and vis_pose_class
+            # set visualisation to vis_all if it is not set, except for vis_class
             if key in [
                 'vis_all',
                 'vis_format',
                 'vis_print',
-                'vis_z_n_int',
-                'vis_pose_class',
+                'vis_epochs',
+                'vis_best',
+                'vis_class',
             ]:
                 continue
             params[key] = params['vis_all']
-            logging.warning(
-                f"Visualisation parameter 'vis_all' is overriding {key} to {params['vis_all']}"
-            )
+            if rank_zero:
+                logging.warning(
+                    f"Visualisation parameter 'vis_all' is overriding {key} to {params['vis_all']}"
+                )
         if (
             'freq' in key
             and params['freq_all'] is not None
             and key not in command_line_params
         ):
-            # set frequency to freq_all if it is not set
-            if key in ['freq_all']:
+            # set frequency to freq_all if it is not set; freq_all 0 means
+            # plots only at best epochs, it does not stop checkpoints or
+            # test encoding
+            if key == 'freq_all' or (
+                params['freq_all'] == 0 and key in ['freq_sta', 'freq_eval']
+            ):
                 continue
             params[key] = params['freq_all']
-            logging.warning(
-                f"Frequency parameter 'freq_all' is overriding {key} to {params['freq_all']}"
-            )
-        if 'vis' in key and val:
-            # make sure frequency is on for associated vis parameters
-            if key in [
-                'vis_format',
-                'vis_his',
-                'vis_aff',
-                'vis_cyc',
-                'vis_los',
-                'vis_z_n_int',
-                'vis_pose_class',
-            ]:
-                # these parameters don't have frequency control
-                continue
-            if params[f"freq_{key.split('_')[-1]}"] == 0:
-                freq = 10 if not params['freq_all'] else params['freq_all']
-                params[f"freq_{key.split('_')[-1]}"] = freq
+            if rank_zero:
                 logging.warning(
-                    f"Parameter {key} is set to True but its frequency is 0. Setting to {freq} epochs."
+                    f"Frequency parameter 'freq_all' is overriding {key} to {params['freq_all']}"
                 )
+
+    # a plot with frequency 0 is only drawn at best epochs
+    if rank_zero and not params['vis_best']:
+        for name in (
+            "acc",
+            "rec",
+            "emb",
+            "dynamic",
+            "sim",
+            "int",
+            "dis",
+            "pos",
+        ):
+            if params[f"vis_{name}"] and params[f"freq_{name}"] == 0:
+                logging.warning(
+                    f"vis_{name} is set but freq_{name} is 0 and vis_best is "
+                    "off, so it will never be plotted."
+                )
+
+    # vis_best can only save plots that are enabled, from best_start onward
+    if rank_zero and params['vis_best']:
+        per_epoch = (
+            "acc",
+            "rec",
+            "emb",
+            "dynamic",
+            "sim",
+            "int",
+            "dis",
+            "pos",
+        )
+        if not any(params[f"vis_{name}"] for name in per_epoch):
+            logging.warning(
+                "vis_best is set but no per-epoch plots are enabled; "
+                "no best plots will be saved."
+            )
+        if params['best_start'] > params['epochs']:
+            logging.warning(
+                f"vis_best starts at epoch {params['best_start']}, after the "
+                f"last epoch ({params['epochs']}); no best plots will be saved."
+            )
 
     # validate the new config
     try:
         params = AffinityConfig(**params)
-        logging.info("Config file is still valid")
+        if rank_zero:
+            logging.info("Config file is still valid")
     except pydantic.ValidationError as e:
-        logging.info("Config file is now invalid:")
-        logging.info(e)
+        logging.error("Config file is now invalid:")
+        logging.error(e)
         raise RuntimeError("Config file is now invalid: " + str(e))
 
     # return the validated config object
@@ -458,5 +535,8 @@ def save_config_params(
     with output_path.open("w") as file:
         yaml.safe_dump(params.model_dump(mode="json"), file)
 
-    logging.info("YAML file containing final config saved at: %s", output_path)
+    if os.environ.get("LOCAL_RANK", "0") == "0":
+        logging.info(
+            "YAML file containing final config saved at: %s", output_path
+        )
     return output_path

@@ -4,6 +4,7 @@ import typing
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
+import sklearn.linear_model
 import sklearn.manifold
 import sklearn.metrics
 import sklearn.model_selection
@@ -23,6 +24,7 @@ def accuracy(
     classifier: str = "NN",
 ) -> tuple[float, float, float, npt.NDArray, npt.NDArray]:
     """Compute classification accuracy and predictions for latent vectors."""
+    logging.info("\n")
     logging.info(
         "############################################### Computing accuracy..."
     )
@@ -69,7 +71,7 @@ def accuracy(
         method = sklearn.neural_network.MLPClassifier(
             max_iter=10000,
             activation="relu",
-            solver="lbfgs",
+            solver="adam",
             tol=1e-2,
             random_state=1,
             alpha=1,
@@ -77,6 +79,9 @@ def accuracy(
     elif classifier == "KNN":
         parameters = {"n_neighbors": range(1, 500, 100)}
         method = sklearn.neighbors.KNeighborsClassifier()
+    elif classifier == "LR":
+        parameters = {"C": [0.01, 0.1, 1, 10, 100]}
+        method = sklearn.linear_model.LogisticRegression(max_iter=1000)
     else:
         raise ValueError("Invalid classifier type must be NN, KNN or LR")
 
@@ -315,13 +320,34 @@ def combine_accuracy_data(
     y_val: list,
     rank_zero: bool,
     world_size: int,
-) -> tuple[npt.NDArray, npt.NDArray, npt.NDArray, npt.NDArray] | None:
+) -> tuple[npt.NDArray, ...] | None:
     """Combine per-rank latent vectors and labels on rank zero."""
-    local_data = (z_train, y_train, z_val, y_val)
+    return combine_rank_data(
+        (z_train, y_train, z_val, y_val), rank_zero, world_size
+    )
+
+
+def mean_over_ranks(
+    batch_sums: npt.NDArray, n_batches: int, fabric
+) -> npt.NDArray:
+    """Batch-weighted mean of per-batch loss sums over all ranks. Collective
+    call: every rank must reach it."""
+    t = torch.tensor(
+        [*batch_sums, n_batches], dtype=torch.float64, device=fabric.device
+    )
+    t = fabric.all_reduce(t, reduce_op="sum")
+    return (t[:-1] / t[-1]).cpu().numpy()
+
+
+def combine_rank_data(
+    local_data: tuple, rank_zero: bool, world_size: int
+) -> tuple[npt.NDArray, ...] | None:
+    """Concatenate each per-rank list in `local_data` across all ranks, on
+    rank zero (None on the other ranks). Must be called on every rank."""
     if not (dist.is_available() and dist.is_initialized() and world_size > 1):
         return tuple(np.asarray(values) for values in local_data)
 
-    gathered_data: list[tuple[list, list, list, list] | None] | None = (
+    gathered_data: list[tuple | None] | None = (
         [None] * world_size if rank_zero else None
     )
     dist.gather_object(local_data, gathered_data, dst=0)
@@ -329,12 +355,10 @@ def combine_accuracy_data(
     if not rank_zero or gathered_data is None:
         return None
 
-    complete_data: list[tuple[list, list, list, list]] = []
+    complete_data: list[tuple] = []
     for rank_data in gathered_data:
         if rank_data is None:
-            raise RuntimeError(
-                "Accuracy data was not gathered from every rank."
-            )
+            raise RuntimeError("Data was not gathered from every rank.")
         complete_data.append(rank_data)
     return tuple(
         np.concatenate(
